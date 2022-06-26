@@ -4,9 +4,6 @@ cmake_minimum_required(VERSION 3.22)
 
 # Helper CMake modules
 list(APPEND CMAKE_MODULE_PATH "${CMAKE_CURRENT_LIST_DIR}/cmake")
-message(STATUS ${CMAKE_MODULE_PATH})
-# Third-party packages
-include(Thirdparty)
 
 #------------------------------------------------------------
 # Begin project definition.
@@ -22,11 +19,6 @@ if (CONVFELT_ENABLE_TESTS)
 	endif ()
 endif ()
 
-# Too many false positives, especially with templated code.
-set(ENABLE_CPPCHECK_DEFAULT OFF)
-# Generate project_options and project_warnings INTERFACE targets.
-dynamic_project_options()
-
 # For `generate_export_header`.
 include(GenerateExportHeader)
 # For `write_basic_package_version_file` et al.
@@ -38,6 +30,8 @@ if (NOT DEFINED CMAKE_INSTALL_MESSAGE)
 	set(CMAKE_INSTALL_MESSAGE LAZY)
 endif ()
 
+# Third-party packages
+include(Thirdparty)
 
 #------------------------------------------------------------
 # Options
