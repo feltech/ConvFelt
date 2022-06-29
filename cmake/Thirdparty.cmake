@@ -14,6 +14,7 @@ endif ()
 
 include(${CPM_DOWNLOAD_LOCATION})
 
+
 #------------------------------------------------------------
 # Install Conan package manager CMake helpers
 
@@ -21,18 +22,18 @@ include(${CPM_DOWNLOAD_LOCATION})
 list(APPEND CMAKE_MODULE_PATH ${CMAKE_BINARY_DIR})
 list(APPEND CMAKE_PREFIX_PATH ${CMAKE_BINARY_DIR})
 
-if(NOT EXISTS "${CMAKE_BINARY_DIR}/conan.cmake")
+if (NOT EXISTS "${CMAKE_BINARY_DIR}/conan.cmake")
 	message(STATUS "Downloading conan.cmake from https://github.com/conan-io/cmake-conan")
 	file(DOWNLOAD "https://raw.githubusercontent.com/conan-io/cmake-conan/0.18.1/conan.cmake"
 		"${CMAKE_BINARY_DIR}/conan.cmake"
 		TLS_VERIFY ON)
-endif()
+endif ()
 
 include(${CMAKE_BINARY_DIR}/conan.cmake)
 
 
 #------------------------------------------------------------
-# Add project_options CMake library v0.21.0
+# Add project_options CMake library
 
 CPMAddPackage("gh:cpp-best-practices/project_options@0.22.4")
 include(${project_options_SOURCE_DIR}/src/DynamicProjectOptions.cmake)
@@ -62,24 +63,25 @@ CPMAddPackage(
 	OPTIONS "BUILD_TESTING OFF" "BUILD_EXAMPLES OFF" "ENABLE_UBLAS OFF" "ENABLE_OPENCL ON"
 )
 
-if(ViennaCL_ADDED)
+if (ViennaCL_ADDED)
 	# Disable clang-tidy for library target.
 	set_target_properties(viennacl PROPERTIES CXX_CLANG_TIDY "")
-	# TODO(DF): Copy/symlink include dir(s) so we're not adding the whole source tree.
-	target_include_directories(viennacl PUBLIC ${ViennaCL_SOURCE_DIR})
-endif()
+	# Create include directory to gather relevant headers - to avoid pollution of adding whole
+	# source tree to include path.
+	file(MAKE_DIRECTORY ${ViennaCL_BINARY_DIR}/include)
+	# Symlink relevant header directories
+	file(CREATE_LINK
+		${ViennaCL_SOURCE_DIR}/viennacl
+		${ViennaCL_BINARY_DIR}/include/viennacl
+		COPY_ON_ERROR SYMBOLIC)
+	# Create library target
+	add_library(ViennaCL::viennacl INTERFACE IMPORTED)
+	# Add headers to library target.
+	target_include_directories(ViennaCL::viennacl INTERFACE ${ViennaCL_BINARY_DIR}/include)
+	# Link library target to source target.
+	target_link_libraries(ViennaCL::viennacl INTERFACE viennacl)
+endif ()
 
-
-if (CONVFELT_ENABLE_TESTS)
-	#------------------------------------------------------------
-	# Catch2 testing library
-	CPMAddPackage("gh:catchorg/Catch2@2.13.8")
-	include(${Catch2_SOURCE_DIR}/contrib/Catch.cmake)
-
-	#------------------------------------------------------------
-	# Trompeloeil mocking library
-	CPMAddPackage("gh:rollbear/trompeloeil@42")
-endif()
 
 #------------------------------------------------------------
 # Load dependencies via Conan package manager
@@ -104,3 +106,24 @@ conan_cmake_install(
 )
 
 find_package(Eigen3)
+
+
+#------------------------------------------------------------
+# (My) Felt library
+
+CPMAddPackage(gh:feltech/Felt@3.2)
+
+
+#------------------------------------------------------------
+# Testing libraries
+
+if (CONVFELT_ENABLE_TESTS)
+	#------------------------------------------------------------
+	# Catch2 testing library
+	CPMAddPackage("gh:catchorg/Catch2@2.13.8")
+	include(${Catch2_SOURCE_DIR}/contrib/Catch.cmake)
+
+	#------------------------------------------------------------
+	# Trompeloeil mocking library
+	CPMAddPackage("gh:rollbear/trompeloeil@42")
+endif ()
