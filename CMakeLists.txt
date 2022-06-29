@@ -30,7 +30,9 @@ if (NOT DEFINED CMAKE_INSTALL_MESSAGE)
 	set(CMAKE_INSTALL_MESSAGE LAZY)
 endif ()
 
+#------------------------------------------------------------
 # Third-party packages
+
 include(Thirdparty)
 
 #------------------------------------------------------------

@@ -1,5 +1,3 @@
-
-
 #------------------------------------------------------------
 # Test executable target
 
@@ -12,7 +10,8 @@ add_executable(
 target_link_libraries(
 	convfelt.test.unit
 	PRIVATE
-	project_options project_warnings
+	project_options
+	project_warnings
 	convfelt
 )
 
