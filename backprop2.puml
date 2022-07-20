@@ -1,0 +1,68 @@
+@startuml
+'https://plantuml.com/sequence-diagram
+
+box Layer
+participant Aggregator as Aggregator1
+collections Filter as Filter1
+end box
+
+box Layer
+participant Aggregator as Aggregator2
+collections Filter as Filter2
+end box
+-> Aggregator1: Update weights
+activate Aggregator1
+Aggregator1 -> Aggregator2: Update weights
+activate Aggregator2
+->> Aggregator1: Get backprop gradient
+Aggregator1 ->> Aggregator2: Get backprop gradient
+Aggregator2 ->>: Get backprop gradient
+Aggregator1 ->> Filter1: Get local gradients
+deactivate Aggregator1
+activate Filter1
+
+Aggregator2 ->> Filter2: Get local gradients
+deactivate Aggregator2
+activate Filter2
+<<- Filter1: Get inputs
+deactivate Filter1
+
+Filter2 ->> Filter1: Get inputs
+deactivate Filter2
+-->> Filter1: Inputs ready
+activate Filter1
+Filter1 -> Filter1: Forward pass
+Filter1 -->> Filter2: Inputs ready
+activate Filter2
+
+Filter1 -->> Aggregator1: Local gradients ready
+deactivate Filter1
+activate Aggregator1
+
+Filter2 -->> Aggregator2: Local gradients ready
+deactivate Filter2
+activate Aggregator2
+
+Aggregator1 -> Aggregator1: Compute mean local gradient
+deactivate Aggregator1
+Aggregator2 -> Aggregator2: Compute mean local gradient
+deactivate Aggregator2
+Aggregator2 <<--: Backprop gradient ready
+activate Aggregator2
+Aggregator2 -->> Aggregator1: Backprop gradient ready
+activate Aggregator1
+<<-- Aggregator1: Backprop gradient ready
+Aggregator1 -> Aggregator1: Update weights
+deactivate Aggregator1
+Aggregator2 -> Aggregator2: Update weights
+Aggregator2 -->> Aggregator1: Weights updated
+deactivate Aggregator2
+activate Aggregator1
+<<-- Aggregator1: Weights updated
+deactivate Aggregator1
+
+
+
+
+
+@enduml

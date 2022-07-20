@@ -1,0 +1,56 @@
+@startuml
+'https://plantuml.com/sequence-diagram
+
+participant Main
+participant IO
+
+box Layer
+participant Aggregator as Aggregator1
+collections Filter as Filter1
+end box
+
+box Layer
+participant Aggregator as Aggregator2
+collections Filter as Filter2
+end box
+
+activate Main
+
+Main -> IO: Read images
+deactivate Main
+activate IO
+
+loop Process images
+    IO -> Filter1: Pop image queue
+
+    activate Filter1
+    Filter1 ->> Filter2: Forward pass
+    activate Filter2
+    Filter2 ->>: Forward pass
+
+    Filter1 -->> Aggregator1: Local grad
+    deactivate Filter1
+
+    activate Aggregator1
+    Aggregator1 -> Aggregator1: Average local grad
+    deactivate Aggregator1
+
+    Filter2 -->> Aggregator2: Local grad
+    deactivate Filter2
+    activate Aggregator2
+    Aggregator2 -> Aggregator2: Average local grad
+    deactivate Aggregator2
+    Aggregator2 <--: Backprop grad
+    activate Aggregator2
+    Aggregator2 -> Aggregator2: Local * backprop grad
+    Aggregator2 --> Aggregator1: Backprop grad
+    activate Aggregator1
+    Aggregator2 -> Aggregator2: Update weights
+    deactivate Aggregator2
+    Aggregator1 -> Aggregator1: Local * backprop grad
+    Aggregator1 -> Aggregator1: Update weights
+    deactivate Aggregator1
+end  # End loop
+IO --> Main: Epoch complete
+activate Main
+@enduml
