@@ -7,6 +7,10 @@ target_compile_features(
 	INTERFACE
 	cxx_std_20
 )
+if (UNIX)
+	target_compile_options(convfelt INTERFACE -fcoroutines)
+	target_link_options(convfelt INTERFACE -fcoroutines)
+endif ()
 
 target_include_directories(
 	convfelt
@@ -14,6 +18,17 @@ target_include_directories(
 	$<BUILD_INTERFACE:${CMAKE_CURRENT_SOURCE_DIR}/include>
 	$<INSTALL_INTERFACE:${CMAKE_INSTALL_INCLUDEDIR}>
 )
+
+target_link_system_libraries(convfelt INTERFACE Eigen3::Eigen ViennaCL::viennacl felt)
+
+target_compile_definitions(
+	convfelt
+	INTERFACE
+	VIENNACL_WITH_EIGEN
+	VIENNACL_WITH_OPENCL
+	CL_TARGET_OPENCL_VERSION=220
+)
+
 install(
 	DIRECTORY
 	${CMAKE_CURRENT_LIST_DIR}/include/convfelt
@@ -24,4 +39,3 @@ install(
 	TARGETS convfelt
 	EXPORT ${PROJECT_NAME}_EXPORTED_TARGETS
 )
-target_link_system_libraries(convfelt INTERFACE Eigen3::Eigen ViennaCL::viennacl felt)

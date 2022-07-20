@@ -49,6 +49,14 @@ set(ENABLE_SANITIZER_ADDRESS_DEFAULT OFF)
 #   LSAN_OPTIONS=suppressions=lsan.supp
 # With the above workarounds, OPT_ENABLE_SANITIZER_ADDRESS can be enabled.
 
+# Disable for now, since -fcoroutines is not supported by Clang, but libstdc++ asserts on it.
+set(ENABLE_CLANG_TIDY_DEFAULT OFF)
+# Disable for now, since false positive compile error, i.e.
+# https://gcc.gnu.org/bugzilla/show_bug.cgi?id=95137#c42
+set(ENABLE_SANITIZER_UNDEFINED_BEHAVIOR_DEFAULT OFF)
+
+
+
 # Generate project_options and project_warnings INTERFACE targets.
 dynamic_project_options()
 
@@ -89,11 +97,36 @@ endif ()
 conan_cmake_configure(
 	REQUIRES
 
-	#------------------------------------------------------------
 	# Eigen linear algebra library
 	eigen/3.4.0
 
+	# OpenImageIO image loading/processing library
+	openimageio/2.2.18.0
+
+	# cppcoro coroutines library
+	andreasbuhr-cppcoro/cci.20210113
+
 	GENERATORS cmake_find_package
+
+	OPTIONS
+	openimageio:shared=False
+	openimageio:fPIC=True
+	openimageio:with_libjpeg=libjpeg
+	openimageio:with_libpng=True
+	openimageio:with_freetype=False
+	openimageio:with_hdf5=False
+	openimageio:with_opencolorio=False
+	openimageio:with_opencv=False
+	openimageio:with_tbb=False
+	openimageio:with_dicom=False # Heavy dependency disabled by default
+	openimageio:with_ffmpeg=False
+	openimageio:with_giflib=False
+	openimageio:with_libheif=False
+	openimageio:with_raw=False # libraw is available under CDDL-1.0 or LGPL-2.1 for this reason it is disabled by default
+	openimageio:with_openjpeg=False
+	openimageio:with_openvdb=False # FIXME broken on M1
+	openimageio:with_ptex=False
+	openimageio:with_libwebp=False
 )
 
 conan_cmake_autodetect(conan_settings)
@@ -105,7 +138,9 @@ conan_cmake_install(
 	SETTINGS ${conan_settings}
 )
 
-find_package(Eigen3)
+find_package(Eigen3 REQUIRED)
+find_package(OpenImageIO REQUIRED)
+find_package(cppcoro REQUIRED)
 
 
 #------------------------------------------------------------

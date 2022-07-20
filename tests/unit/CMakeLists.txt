@@ -18,6 +18,15 @@ target_link_libraries(
 target_link_system_libraries(
 	convfelt.test.unit
 	PRIVATE
-	Catch2 trompeloeil)
+	Catch2 trompeloeil
+	OpenImageIO::OpenImageIO
+	cppcoro::cppcoro
+)
+
+target_compile_definitions(
+	convfelt.test.unit
+	PRIVATE
+	CONVFELT_TEST_RESOURCE_DIR=\"${PROJECT_SOURCE_DIR}/tests/resources\"
+)
 
 catch_discover_tests(convfelt.test.unit)
