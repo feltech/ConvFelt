@@ -22,6 +22,7 @@ Filter1 -->> Aggregator1: Local gradients ready
 deactivate Filter1
 activate Aggregator1
 
+Filter2 -->>: Inputs ready
 Filter2 -->> Aggregator2: Local gradients ready
 deactivate Filter2
 activate Aggregator2
