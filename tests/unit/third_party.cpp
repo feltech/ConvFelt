@@ -334,25 +334,25 @@ SCENARIO("Input/output ConvGrids")
 					}
 				}
 				{
-					auto const filter_pos = filter_grid.children().size() / 2;
-					auto const & filter = filter_grid.children().get(filter_pos);
-					CHECK(filter.size() == filter_size);
-
 					std::size_t num_nonzero = 0;
-
-					for (auto const & filter_grid_pos : convfelt::iter::pos(filter))
+					for (auto const & filter : convfelt::iter::val(filter_grid.children()))
 					{
-						Felt::Vec3i const image_grid_start_pos = filter_stride *
-							(filter_grid_pos.array() / filter_size.array()).matrix();
+						CHECK(filter.size() == filter_size);
 
-						Felt::Vec3i const image_grid_pos = filter_grid_pos - image_grid_start_pos;
+						for (auto const & [pos_idx, pos] : convfelt::iter::idx_and_pos(filter))
+						{
+							Felt::Vec3i const filter_image_start_pos = filter_stride *
+								(pos.array() / filter_size.array()).matrix();
 
-						CAPTURE(filter_grid_pos);
-						CAPTURE(image_grid_pos);
-						CHECK(filter.get(filter_grid_pos) == image_grid.get(image_grid_pos));
+							Felt::Vec3i const image_grid_pos = pos - filter_image_start_pos;
 
-						if (filter.get(filter_grid_pos) != 0)
-							++num_nonzero;
+							CAPTURE(pos);
+							CAPTURE(image_grid_pos);
+							CHECK(filter.get(pos_idx) == image_grid.get(image_grid_pos));
+
+							if (filter.get(pos) != 0)
+								++num_nonzero;
+						}
 					}
 					CHECK(num_nonzero > 0);
 				}

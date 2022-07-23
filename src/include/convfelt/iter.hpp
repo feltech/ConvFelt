@@ -27,7 +27,7 @@ template <typename T>
 concept Grid = requires(T v)
 {
 	typename helpers::VecDiFor<T>;
-	{v.data().size()} -> std::same_as<std::size_t>;
+	{v.data().size()} -> std::same_as<Felt::PosIdx>;
 	{v.offset()} -> std::convertible_to<helpers::VecDiFor<T>>;
 	{v.size()} -> std::convertible_to<helpers::VecDiFor<T>>;
 };
@@ -62,6 +62,28 @@ static inline auto pos(concepts::Grid auto && grid)
 
 	for (auto pos_idx : idx(Felt::PosIdx(grid.size().prod())))
 		co_yield grid.offset() + Felt::index<D>(pos_idx, grid.size());
+};
+
+template <class G>
+using IdxAndPos = std::tuple<Felt::PosIdx, concepts::helpers::VecDiFor<G>>;
+
+static inline auto idx_and_pos(concepts::Grid auto && grid)
+	-> cppcoro::generator<IdxAndPos<decltype(grid)>>
+{
+	static constexpr auto D = concepts::helpers::DimFor<decltype(grid)>;
+	using VecDi = concepts::helpers::VecDiFor<decltype(grid)>;
+
+	for (auto const pos_idx : idx(Felt::PosIdx(grid.size().prod())))
+	{
+		VecDi const pos = grid.offset() + Felt::index<D>(pos_idx, grid.size());
+		co_yield {pos_idx, pos};
+	}
+};
+
+
+static constexpr decltype(auto) val(concepts::Grid auto && grid)
+{
+	return grid.data();
 };
 
 static constexpr auto idx_and_val(concepts::Grid auto && grid)
