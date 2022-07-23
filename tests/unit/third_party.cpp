@@ -1,3 +1,5 @@
+#include <ranges>
+
 #include <catch2/catch.hpp>
 
 #include <OpenImageIO/imagebufalgo.h>
@@ -6,13 +8,13 @@
 #include <Felt/Impl/Grid.hpp>
 #include <cppcoro/sync_wait.hpp>
 #include <cppcoro/task.hpp>
-#include <cppcoro/when_all_ready.hpp>
 #include <viennacl/device_specific/builtin_database/common.hpp>
 #include <viennacl/matrix.hpp>
 #include <viennacl/vector.hpp>
 
 #include <convfelt/ConvGrid.hpp>
 #include <convfelt/Numeric.hpp>
+#include <convfelt/iter.hpp>
 
 SCENARIO("Loading ViennaCL")
 {
@@ -104,7 +106,7 @@ SCENARIO("Using ViennaCL with Felt")
 		constexpr Felt::Dim filter_size = filter_dim * filter_dim * filter_dim;
 
 		// 5D grid.
-		using Grid = ConvFelt::ConvGrid<float, 3>;
+		using Grid = convfelt::ConvGrid<float, 3>;
 
 		// Imagine a 126x126x3 (RGB) image with 42x 3x3 convolutions, all white.
 		Grid grid{{126, 126, 3}, {0, 0, 0}, filter_dims, 1.0f};
@@ -188,98 +190,154 @@ SCENARIO("OpenImageIO with bit of cppcoro and Felt")
 					image.getpixel(0, 64, pixel.data(), 3);
 					CHECK(pixel == Pixel{1, 1, 1});
 				}
+			}
 
-				WHEN("image is loaded into grid with no zero-padding")
+			WHEN("image is loaded into grid with no zero-padding")
+			{
+				auto image_grid_spec = image.spec();
+				image_grid_spec.format = OIIO::TypeDescFromC<convfelt::Scalar>::value();
+
+				Felt::Impl::Grid::Simple<convfelt::Scalar, 3> image_grid{
+					{image_grid_spec.height, image_grid_spec.width, image_grid_spec.nchannels},
+					{0, 0, 0},
+					0};
+
+				OIIO::ImageBuf image_grid_buf{image_grid_spec, image_grid.data().data()};
+				OIIO::ImageBufAlgo::paste(image_grid_buf, 0, 0, 0, 0, image);
+
+				THEN("grid contains image")
 				{
-					auto image_grid_spec = image.spec();
-					image_grid_spec.format = OIIO::TypeDescFromC<convfelt::Scalar>::value();
+					for (auto x : convfelt::iter::idx(image_grid.size().x()))
+						for (auto y : convfelt::iter::idx(image_grid.size().y()))
+						{
+							Pixel pixel;
+							image.getpixel(y, x, pixel.data(), 3);
+							for (auto z : convfelt::iter::idx(image_grid.size().z()))
+							{
+								CAPTURE(x, y, z);
+								CHECK(image_grid.get({x, y, z}) == pixel(z));
+							}
+						}
+				}
+			}
 
-					Felt::Impl::Grid::Simple<convfelt::Scalar, 3> image_grid{
-						{image_grid_spec.height, image_grid_spec.width, image_grid_spec.nchannels},
-						{0, 0, 0},
-						0};
+			WHEN("image is loaded into grid with 1 pixel of zero-padding")
+			{
+				auto image_grid_spec = image.spec();
+				image_grid_spec.width += 2;
+				image_grid_spec.height += 2;
+				image_grid_spec.format = OIIO::TypeDescFromC<convfelt::Scalar>::value();
 
-					OIIO::ImageBuf image_grid_buf{image_grid_spec, image_grid.data().data()};
-					OIIO::ImageBufAlgo::paste(image_grid_buf, 0, 0, 0, 0, image);
+				Felt::Impl::Grid::Simple<convfelt::Scalar, 3> image_grid{
+					{image.spec().height + 2, image.spec().width + 2, image_grid_spec.nchannels},
+					{0, 0, 0},
+					0};
 
-					THEN("grid contains image")
-					{
-						for (Felt::NodeIdx x = 0; x < image_grid.size().x(); ++x)
-							for (Felt::NodeIdx y = 0; y < image_grid.size().y(); ++y)
+				OIIO::ImageBuf image_grid_buf{image_grid_spec, image_grid.data().data()};
+				OIIO::ImageBufAlgo::paste(image_grid_buf, 1, 1, 0, 0, image);
+
+				THEN("grid contains padded image")
+				{
+					for (auto x : convfelt::iter::idx(image_grid.size().x()))
+						for (auto y : convfelt::iter::idx(image_grid.size().y()))
+						{
+							if (x == 0 || y == 0 ||
+								//
+								x == image_grid.size().x() - 1 || y == image_grid.size().y() - 1)
+							{
+								for (auto z : convfelt::iter::idx(image_grid.size().z()))
+								{
+									CAPTURE(x, y, z);
+									CHECK(image_grid.get({x, y, z}) == 0);
+								}
+							}
+							else
 							{
 								Pixel pixel;
-								image.getpixel(y, x, pixel.data(), 3);
-								for (Felt::NodeIdx z = 0; z < image_grid.size().z(); ++z)
+								image.getpixel(y - 1, x - 1, pixel.data(), 3);
+								for (auto z : convfelt::iter::idx(image_grid.size().z()))
 								{
 									CAPTURE(x, y, z);
 									CHECK(image_grid.get({x, y, z}) == pixel(z));
 								}
 							}
-					}
+						}
 				}
 
-				WHEN("image is loaded into grid with 1 pixel of zero-padding")
+				AND_WHEN("image is split into filter regions")
 				{
-					auto image_grid_spec = image.spec();
-//					image_grid_spec.x = 1;
-//					image_grid_spec.y = 1;
-//					image_grid_spec.full_x = 1;
-//					image_grid_spec.full_y = 1;
-//					image_grid_spec.full_width += 2;
-//					image_grid_spec.full_height += 2;
-					image_grid_spec.width += 2;
-					image_grid_spec.height += 2;
-					image_grid_spec.format = OIIO::TypeDescFromC<convfelt::Scalar>::value();
+					using FilterGrid = convfelt::ConvGrid<convfelt::Scalar, 3>;
 
-					Felt::Impl::Grid::Simple<convfelt::Scalar, 3> image_grid{
-						{image.spec().height + 2,
-						 image.spec().width + 2,
-						 image_grid_spec.nchannels},
-						{0, 0, 0},
-						0};
+					const Felt::NodeIdx filter_stride = 2;
 
-					OIIO::ImageBuf image_grid_buf{image_grid_spec, image_grid.data().data()};
-//					image_grid_buf.copy_pixels(image);
-					OIIO::ImageBufAlgo::paste(image_grid_buf, 1, 1, 0, 0, image);
-
-					THEN("grid contains padded image")
+					FilterGrid filter_grid = [&image_grid, filter_stride]
 					{
-						for (Felt::NodeIdx x = 0; x < image_grid.size().x(); ++x)
-							for (Felt::NodeIdx y = 0; y < image_grid.size().y(); ++y)
-							{
-								if (x == 0 || y == 0 ||
-									//
-									x == image_grid.size().x() - 1 ||
-									y == image_grid.size().y() - 1)
-								{
-									for (Felt::NodeIdx z = 0; z < image_grid.size().z(); ++z)
-									{
-										CAPTURE(x, y, z);
-										CHECK(image_grid.get({x, y, z}) == 0);
-									}
-								}
-								else
-								{
-									Pixel pixel;
-									image.getpixel(y - 1, x - 1, pixel.data(), 3);
-									for (Felt::NodeIdx z = 0; z < image_grid.size().z(); ++z)
-									{
-										CAPTURE(x, y, z);
-										CHECK(image_grid.get({x, y, z}) == pixel(z));
-									}
-								}
-							}
+						const Felt::Vec3i filter_size{4, 4, image_grid.size()(2)};
+						const Felt::Vec3i num_filters =
+							(image_grid.size() - filter_size) / filter_stride + Felt::Vec3i::Ones();
+						const Felt::Vec3i num_connections =
+							(num_filters.array() * filter_size.array()).matrix();
 
-						CHECK(image_grid.get({1, 64, 0}) == 1);
-						CHECK(image_grid.get({64, 0, 0}) == 0);
-						CHECK(image_grid.get({64, 0, 1}) == 0);
-						CHECK(image_grid.get({64, 0, 2}) == 0);
-						CHECK(image_grid.get({64, 1, 0}) == 1);
-						CHECK(image_grid.get({64, 1, 1}) == 1);
-						CHECK(image_grid.get({64, 1, 2}) == 1);
+						return FilterGrid{num_connections, {0, 0, 0}, filter_size, 0};
+					}();
+
+					for (auto [filter_pos_idx, filter] :
+						 convfelt::iter::idx_val(filter_grid.children()))
+					{
+						const Felt::Vec3i input_pos_start =
+							filter_grid.children().index(filter_pos_idx) * filter_stride;
+
+						for (Felt::PosIdx local_pos_idx : convfelt::iter::idx(filter))
+						{
+							const Felt::Vec3i input_pos =
+								input_pos_start + Felt::index<3>(local_pos_idx, filter.size());
+
+							filter.set(local_pos_idx, image_grid.get(input_pos));
+						}
 					}
-				}  // WHEN("image is loaded into grid with 1 pixel of zero-padding")
-			}  // THEN("file has expected properties")
+
+					THEN("regions have expected values")
+					{
+						const Felt::Vec3i filter_size{4, 4, image_grid.size()(2)};
+						{
+							auto const & filter = filter_grid.children().get({0, 0, 0});
+							CHECK(filter.size() == filter_size);
+
+							for (auto const & filter_grid_pos : convfelt::iter::pos(filter))
+							{
+								CAPTURE(filter_grid_pos);
+								CHECK(
+									filter.get(filter_grid_pos) == image_grid.get(filter_grid_pos));
+							}
+						}
+						{
+							auto const filter_pos = filter_grid.children().size() / 2;
+							auto const & filter = filter_grid.children().get(filter_pos);
+							CHECK(filter.size() == filter_size);
+
+							std::size_t num_nonzero = 0;
+
+							for (auto const & filter_grid_pos : convfelt::iter::pos(filter))
+							{
+								Felt::Vec3i const image_grid_start_pos = filter_stride *
+									(filter_grid_pos.array() / filter_size.array()).matrix();
+
+								Felt::Vec3i const image_grid_pos =
+									filter_grid_pos - image_grid_start_pos;
+
+								CAPTURE(filter_grid_pos);
+								CAPTURE(image_grid_pos);
+								CHECK(
+									filter.get(filter_grid_pos) == image_grid.get(image_grid_pos));
+
+								if (filter.get(filter_grid_pos) != 0)
+									++num_nonzero;
+							}
+							CHECK(num_nonzero > 0);
+						}
+					}
+				}
+			}  // WHEN("image is loaded into grid with 1 pixel of zero-padding")
 		}
 	}
 }

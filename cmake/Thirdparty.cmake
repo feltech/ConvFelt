@@ -106,6 +106,9 @@ conan_cmake_configure(
 	# cppcoro coroutines library
 	andreasbuhr-cppcoro/cci.20210113
 
+	# range-v3 (whilst waiting for std::range) library
+	range-v3/0.12.0
+
 	GENERATORS cmake_find_package
 
 	OPTIONS
@@ -141,6 +144,7 @@ conan_cmake_install(
 find_package(Eigen3 REQUIRED)
 find_package(OpenImageIO REQUIRED)
 find_package(cppcoro REQUIRED)
+find_package(range-v3 REQUIRED)
 
 
 #------------------------------------------------------------

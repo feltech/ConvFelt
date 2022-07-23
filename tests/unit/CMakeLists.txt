@@ -21,7 +21,16 @@ target_link_system_libraries(
 	Catch2 trompeloeil
 	OpenImageIO::OpenImageIO
 	cppcoro::cppcoro
+	range-v3::range-v3
 )
+
+if (UNIX)
+	target_compile_options(
+		convfelt.test.unit
+		PRIVATE
+		-fconcepts-diagnostics-depth=10
+	)
+endif ()
 
 target_compile_definitions(
 	convfelt.test.unit
