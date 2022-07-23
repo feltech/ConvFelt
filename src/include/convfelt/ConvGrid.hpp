@@ -4,6 +4,8 @@
 #include <Felt/Impl/Mixin/NumericMixin.hpp>
 #include <Felt/Impl/Mixin/PartitionedMixin.hpp>
 
+#include "Numeric.hpp"
+
 /**
  * This header contains the grid structures used by ConvFelt.
  *
@@ -22,8 +24,12 @@
  * The output spatial partition size is the filter's output size (Cw, Ch, Cd).
  */
 
-namespace ConvFelt
+namespace convfelt
 {
+template <typename T, Felt::Dim D>
+using InputGrid = Felt::Impl::Grid::Simple<T, D>;
+
+
 template <typename T, Felt::Dim D>
 class Filter
 	: FELT_MIXINS(
@@ -33,7 +39,9 @@ class Filter
 //{
 private:
 	using This = Filter<T, D>;
+
 	using Traits = Felt::Impl::Traits<This>;
+	using Leaf = typename Traits::Leaf;
 
 	using AccessImpl = Felt::Impl::Mixin::Grid::Access::ByValue<This>;
 	using ActivateImpl = Felt::Impl::Mixin::Grid::Activate<This>;
@@ -41,10 +49,8 @@ private:
 	using SizeImpl = Felt::Impl::Mixin::Grid::Resize<This>;
 	using SnapshotImpl = Felt::Impl::Mixin::Numeric::Snapshot<This>;
 
-	using VecDi = Felt::VecDi<D>;
-	using Leaf = typename Traits::Leaf;
-
 public:
+	using VecDi = Felt::VecDi<D>;
 	using typename SnapshotImpl::ArrayColMap;
 
 	explicit Filter(const Leaf background_) : ActivateImpl{background_} {}
@@ -63,17 +69,13 @@ public:
 };
 
 template <typename T, Felt::Dim D>
-class ConvGrid
-	: FELT_MIXINS(
-		  (ConvGrid<T, D>),
-		  (Grid::Size)(Partitioned::Access)(Partitioned::Children)(Partitioned::Leafs),
-		  (Grid::Index)
-	  )
-//{
+class ConvGrid : FELT_MIXINS(
+					 (ConvGrid<T, D>),
+					 (Grid::Size)(Partitioned::Access)(Partitioned::Children)(Partitioned::Leafs),
+					 (Grid::Index))
 private:
-	using VecDi = Felt::VecDi<D>;
-
 	using This = ConvGrid<T, D>;
+
 	using Traits = Felt::Impl::Traits<This>;
 	using Leaf = typename Traits::Leaf;
 
@@ -85,6 +87,7 @@ private:
 public:
 	using ChildrenGrid = typename ChildrenImpl::ChildrenGrid;
 	using Child = typename Traits::Child;
+	using VecDi = Felt::VecDi<D>;
 
 	ConvGrid(
 		const VecDi & size_,
@@ -93,15 +96,14 @@ public:
 		const Leaf background_)
 		: SizeImpl{size_, offset_}, ChildrenImpl{size_, offset_, child_size_, Child{background_}}
 	{
-		for (auto& child : ChildrenImpl::children().data())
-			child.activate();
+		for (auto & child : ChildrenImpl::children().data()) child.activate();
 	}
 
 	using AccessImpl::get;
 	using AccessImpl::set;
 	using ChildrenImpl::children;
-	using LeafsImpl::pos_child;
 	using LeafsImpl::leafs;
+	using LeafsImpl::pos_child;
 	using LeafsImpl::pos_idx_child;
 	using SizeImpl::inside;
 	using SizeImpl::offset;
@@ -110,19 +112,19 @@ public:
 }  // namespace ConvFelt
 
 template <typename T, Felt::Dim D>
-struct Felt::Impl::Traits<ConvFelt::ConvGrid<T, D>>
+struct Felt::Impl::Traits<convfelt::ConvGrid<T, D>>
 {
 	/// Single index stored in each grid node.
 	using Leaf = T;
 	/// Dimension of grid.
 	static constexpr Dim t_dims = D;
 
-	using Child = ConvFelt::Filter<T, D>;
+	using Child = convfelt::Filter<T, D>;
 	using Children = Felt::Impl::Tracked::SingleListSingleIdxByRef<Child, D>;
 };
 
 template <typename T, Felt::Dim D>
-struct Felt::Impl::Traits<ConvFelt::Filter<T, D>>
+struct Felt::Impl::Traits<convfelt::Filter<T, D>>
 {
 	using Leaf = T;
 	static constexpr Dim t_dims = D;

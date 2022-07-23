@@ -11,20 +11,25 @@ namespace convfelt
 {
 namespace concepts
 {
-namespace detail
+namespace helpers
 {
+template <class G>
+constexpr Felt::Dim DimFor = Felt::Impl::Traits<std::decay_t<G>>::t_dims;
 
 template <class G>
-using VecDiFor = Felt::VecDi<Felt::Impl::Traits<std::decay_t<G>>::t_dims>;
+using VecDiFor = Felt::VecDi<DimFor<G>>;
+}
 
+namespace detail
+{
 // clang-format off
 template <typename T>
 concept Grid = requires(T v)
 {
-	typename VecDiFor<T>;
+	typename helpers::VecDiFor<T>;
 	{v.data().size()} -> std::same_as<std::size_t>;
-	{v.offset()} -> std::convertible_to<VecDiFor<T>>;
-	{v.size()} -> std::convertible_to<VecDiFor<T>>;
+	{v.offset()} -> std::convertible_to<helpers::VecDiFor<T>>;
+	{v.size()} -> std::convertible_to<helpers::VecDiFor<T>>;
 };
 // clang-format on
 }  // namespace detail
@@ -45,19 +50,21 @@ static constexpr auto idx(concepts::Integral auto &&... args)
 	return ranges::views::indices(std::forward<decltype(args)>(args)...);
 };
 
-static constexpr auto idx(concepts::Grid auto && grid)
+static constexpr auto pos_idx(concepts::Grid auto && grid)
 {
 	return idx(grid.data().size());
 };
 
 static inline auto pos(concepts::Grid auto && grid)
-	-> cppcoro::generator<concepts::detail::VecDiFor<decltype(grid)>>
+	-> cppcoro::generator<concepts::helpers::VecDiFor<decltype(grid)>>
 {
-	for (auto idx : idx(grid.size().prod()))
-		co_yield grid.offset() + Felt::index<3>(Felt::PosIdx(idx), grid.size());
+	static constexpr auto D = concepts::helpers::DimFor<decltype(grid)>;
+
+	for (auto pos_idx : idx(Felt::PosIdx(grid.size().prod())))
+		co_yield grid.offset() + Felt::index<D>(pos_idx, grid.size());
 };
 
-static constexpr auto idx_val(concepts::Grid auto && grid)
+static constexpr auto idx_and_val(concepts::Grid auto && grid)
 {
 	return ranges::views::enumerate(grid.data());
 };

@@ -147,14 +147,14 @@ SCENARIO("Using ViennaCL with Felt")
 	}
 }
 
-SCENARIO("OpenImageIO with bit of cppcoro and Felt")
+SCENARIO("Using OpenImageIO with cppcoro and loading into Felt grid")
 {
 	GIVEN("a simple monochrome image file")
 	{
 		static constexpr std::string_view file_path = CONVFELT_TEST_RESOURCE_DIR "/plus.png";
 		using Pixel = Felt::VecDT<float, 3>;
 
-		WHEN("file is loaded")
+		WHEN("image file is loaded")
 		{
 			auto task = []() -> cppcoro::task<OIIO::ImageBuf>
 			{
@@ -192,12 +192,12 @@ SCENARIO("OpenImageIO with bit of cppcoro and Felt")
 				}
 			}
 
-			WHEN("image is loaded into grid with no zero-padding")
+			AND_WHEN("image is loaded into grid with no zero-padding")
 			{
 				auto image_grid_spec = image.spec();
 				image_grid_spec.format = OIIO::TypeDescFromC<convfelt::Scalar>::value();
 
-				Felt::Impl::Grid::Simple<convfelt::Scalar, 3> image_grid{
+				convfelt::InputGrid<convfelt::Scalar, 3> image_grid{
 					{image_grid_spec.height, image_grid_spec.width, image_grid_spec.nchannels},
 					{0, 0, 0},
 					0};
@@ -221,14 +221,14 @@ SCENARIO("OpenImageIO with bit of cppcoro and Felt")
 				}
 			}
 
-			WHEN("image is loaded into grid with 1 pixel of zero-padding")
+			AND_WHEN("image is loaded into grid with 1 pixel of zero-padding")
 			{
 				auto image_grid_spec = image.spec();
 				image_grid_spec.width += 2;
 				image_grid_spec.height += 2;
 				image_grid_spec.format = OIIO::TypeDescFromC<convfelt::Scalar>::value();
 
-				Felt::Impl::Grid::Simple<convfelt::Scalar, 3> image_grid{
+				convfelt::InputGrid<convfelt::Scalar, 3> image_grid{
 					{image.spec().height + 2, image.spec().width + 2, image_grid_spec.nchannels},
 					{0, 0, 0},
 					0};
@@ -263,81 +263,100 @@ SCENARIO("OpenImageIO with bit of cppcoro and Felt")
 							}
 						}
 				}
+			}
+		}
+	}
+}
 
-				AND_WHEN("image is split into filter regions")
+SCENARIO("Input/output ConvGrids")
+{
+	GIVEN("a simple monochrome image file loaded with 1 pixel of zero padding")
+	{
+		static constexpr std::string_view file_path = CONVFELT_TEST_RESOURCE_DIR "/plus.png";
+		OIIO::ImageBuf image{std::string{file_path}};
+		image.read();
+		auto image_grid_spec = image.spec();
+		image_grid_spec.width += 2;
+		image_grid_spec.height += 2;
+		image_grid_spec.format = OIIO::TypeDescFromC<convfelt::Scalar>::value();
+
+		convfelt::InputGrid<convfelt::Scalar, 3> image_grid{
+			{image.spec().height + 2, image.spec().width + 2, image_grid_spec.nchannels},
+			{0, 0, 0},
+			0};
+
+		OIIO::ImageBuf image_grid_buf{image_grid_spec, image_grid.data().data()};
+		OIIO::ImageBufAlgo::paste(image_grid_buf, 1, 1, 0, 0, image);
+
+		WHEN("image is split into filter regions")
+		{
+			using FilterGrid = convfelt::ConvGrid<convfelt::Scalar, 3>;
+
+			const Felt::NodeIdx filter_stride = 2;
+
+			FilterGrid filter_grid = [&image_grid, filter_stride]
+			{
+				const Felt::Vec3i filter_size{4, 4, image_grid.size()(2)};
+				const Felt::Vec3i num_filters =
+					(image_grid.size() - filter_size) / filter_stride + Felt::Vec3i::Ones();
+				const Felt::Vec3i num_connections =
+					(num_filters.array() * filter_size.array()).matrix();
+
+				return FilterGrid{num_connections, {0, 0, 0}, filter_size, 0};
+			}();
+
+			for (auto [filter_pos_idx, filter] :
+				 convfelt::iter::idx_and_val(filter_grid.children()))
+			{
+				const Felt::Vec3i input_pos_start =
+					filter_grid.children().index(filter_pos_idx) * filter_stride;
+
+				for (Felt::PosIdx local_pos_idx : convfelt::iter::pos_idx(filter))
 				{
-					using FilterGrid = convfelt::ConvGrid<convfelt::Scalar, 3>;
+					const Felt::Vec3i input_pos =
+						input_pos_start + Felt::index<3>(local_pos_idx, filter.size());
 
-					const Felt::NodeIdx filter_stride = 2;
+					filter.set(local_pos_idx, image_grid.get(input_pos));
+				}
+			}
 
-					FilterGrid filter_grid = [&image_grid, filter_stride]
+			THEN("regions have expected values")
+			{
+				const Felt::Vec3i filter_size{4, 4, image_grid.size()(2)};
+				{
+					auto const & filter = filter_grid.children().get({0, 0, 0});
+					CHECK(filter.size() == filter_size);
+
+					for (auto const & filter_grid_pos : convfelt::iter::pos(filter))
 					{
-						const Felt::Vec3i filter_size{4, 4, image_grid.size()(2)};
-						const Felt::Vec3i num_filters =
-							(image_grid.size() - filter_size) / filter_stride + Felt::Vec3i::Ones();
-						const Felt::Vec3i num_connections =
-							(num_filters.array() * filter_size.array()).matrix();
-
-						return FilterGrid{num_connections, {0, 0, 0}, filter_size, 0};
-					}();
-
-					for (auto [filter_pos_idx, filter] :
-						 convfelt::iter::idx_val(filter_grid.children()))
-					{
-						const Felt::Vec3i input_pos_start =
-							filter_grid.children().index(filter_pos_idx) * filter_stride;
-
-						for (Felt::PosIdx local_pos_idx : convfelt::iter::idx(filter))
-						{
-							const Felt::Vec3i input_pos =
-								input_pos_start + Felt::index<3>(local_pos_idx, filter.size());
-
-							filter.set(local_pos_idx, image_grid.get(input_pos));
-						}
-					}
-
-					THEN("regions have expected values")
-					{
-						const Felt::Vec3i filter_size{4, 4, image_grid.size()(2)};
-						{
-							auto const & filter = filter_grid.children().get({0, 0, 0});
-							CHECK(filter.size() == filter_size);
-
-							for (auto const & filter_grid_pos : convfelt::iter::pos(filter))
-							{
-								CAPTURE(filter_grid_pos);
-								CHECK(
-									filter.get(filter_grid_pos) == image_grid.get(filter_grid_pos));
-							}
-						}
-						{
-							auto const filter_pos = filter_grid.children().size() / 2;
-							auto const & filter = filter_grid.children().get(filter_pos);
-							CHECK(filter.size() == filter_size);
-
-							std::size_t num_nonzero = 0;
-
-							for (auto const & filter_grid_pos : convfelt::iter::pos(filter))
-							{
-								Felt::Vec3i const image_grid_start_pos = filter_stride *
-									(filter_grid_pos.array() / filter_size.array()).matrix();
-
-								Felt::Vec3i const image_grid_pos =
-									filter_grid_pos - image_grid_start_pos;
-
-								CAPTURE(filter_grid_pos);
-								CAPTURE(image_grid_pos);
-								CHECK(
-									filter.get(filter_grid_pos) == image_grid.get(image_grid_pos));
-
-								if (filter.get(filter_grid_pos) != 0)
-									++num_nonzero;
-							}
-							CHECK(num_nonzero > 0);
-						}
+						CAPTURE(filter_grid_pos);
+						CHECK(filter.get(filter_grid_pos) == image_grid.get(filter_grid_pos));
 					}
 				}
-			}  // WHEN("image is loaded into grid with 1 pixel of zero-padding")
+				{
+					auto const filter_pos = filter_grid.children().size() / 2;
+					auto const & filter = filter_grid.children().get(filter_pos);
+					CHECK(filter.size() == filter_size);
+
+					std::size_t num_nonzero = 0;
+
+					for (auto const & filter_grid_pos : convfelt::iter::pos(filter))
+					{
+						Felt::Vec3i const image_grid_start_pos = filter_stride *
+							(filter_grid_pos.array() / filter_size.array()).matrix();
+
+						Felt::Vec3i const image_grid_pos = filter_grid_pos - image_grid_start_pos;
+
+						CAPTURE(filter_grid_pos);
+						CAPTURE(image_grid_pos);
+						CHECK(filter.get(filter_grid_pos) == image_grid.get(image_grid_pos));
+
+						if (filter.get(filter_grid_pos) != 0)
+							++num_nonzero;
+					}
+					CHECK(num_nonzero > 0);
+				}
+			}
 		}
 	}
 }
