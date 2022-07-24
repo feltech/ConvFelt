@@ -106,7 +106,7 @@ SCENARIO("Using ViennaCL with Felt")
 		constexpr Felt::Dim filter_size = filter_dim * filter_dim * filter_dim;
 
 		// 5D grid.
-		using Grid = convfelt::ConvGrid<float, 3>;
+		using Grid = convfelt::ConvGrid;
 
 		// Imagine a 126x126x3 (RGB) image with 42x 3x3 convolutions, all white.
 		Grid grid{{126, 126, 3}, {0, 0, 0}, filter_dims, 1.0f};
@@ -197,7 +197,7 @@ SCENARIO("Using OpenImageIO with cppcoro and loading into Felt grid")
 				auto image_grid_spec = image.spec();
 				image_grid_spec.format = OIIO::TypeDescFromC<convfelt::Scalar>::value();
 
-				convfelt::InputGrid<convfelt::Scalar, 3> image_grid{
+				convfelt::InputGrid image_grid{
 					{image_grid_spec.height, image_grid_spec.width, image_grid_spec.nchannels},
 					{0, 0, 0},
 					0};
@@ -228,7 +228,7 @@ SCENARIO("Using OpenImageIO with cppcoro and loading into Felt grid")
 				image_grid_spec.height += 2;
 				image_grid_spec.format = OIIO::TypeDescFromC<convfelt::Scalar>::value();
 
-				convfelt::InputGrid<convfelt::Scalar, 3> image_grid{
+				convfelt::InputGrid image_grid{
 					{image.spec().height + 2, image.spec().width + 2, image_grid_spec.nchannels},
 					{0, 0, 0},
 					0};
@@ -280,7 +280,7 @@ SCENARIO("Input/output ConvGrids")
 		image_grid_spec.height += 2;
 		image_grid_spec.format = OIIO::TypeDescFromC<convfelt::Scalar>::value();
 
-		convfelt::InputGrid<convfelt::Scalar, 3> image_grid{
+		convfelt::InputGrid image_grid{
 			{image.spec().height + 2, image.spec().width + 2, image_grid_spec.nchannels},
 			{0, 0, 0},
 			0};
@@ -290,26 +290,26 @@ SCENARIO("Input/output ConvGrids")
 
 		WHEN("image is split into filter regions")
 		{
-			using FilterGrid = convfelt::ConvGrid<convfelt::Scalar, 3>;
+			using FilterGrid = convfelt::ConvGrid;
 
 			const Felt::NodeIdx filter_stride = 2;
 
-			FilterGrid filter_grid = [&image_grid, filter_stride]
+			const Felt::Vec3i filter_input_shape{4, 4, image_grid.size().z()};
+			FilterGrid filter_input_grid = [&image_grid, &filter_input_shape, filter_stride]
 			{
-				const Felt::Vec3i filter_size{4, 4, image_grid.size()(2)};
 				const Felt::Vec3i num_filters =
-					(image_grid.size() - filter_size) / filter_stride + Felt::Vec3i::Ones();
+					(image_grid.size() - filter_input_shape) / filter_stride + Felt::Vec3i::Ones();
 				const Felt::Vec3i num_connections =
-					(num_filters.array() * filter_size.array()).matrix();
+					(num_filters.array() * filter_input_shape.array()).matrix();
 
-				return FilterGrid{num_connections, {0, 0, 0}, filter_size, 0};
+				return FilterGrid{num_connections, {0, 0, 0}, filter_input_shape, 0};
 			}();
 
 			for (auto [filter_pos_idx, filter] :
-				 convfelt::iter::idx_and_val(filter_grid.children()))
+				 convfelt::iter::idx_and_val(filter_input_grid.children()))
 			{
 				const Felt::Vec3i input_pos_start =
-					filter_grid.children().index(filter_pos_idx) * filter_stride;
+					filter_input_grid.children().index(filter_pos_idx) * filter_stride;
 
 				for (Felt::PosIdx local_pos_idx : convfelt::iter::pos_idx(filter))
 				{
@@ -322,39 +322,101 @@ SCENARIO("Input/output ConvGrids")
 
 			THEN("regions have expected values")
 			{
-				const Felt::Vec3i filter_size{4, 4, image_grid.size()(2)};
 				{
-					auto const & filter = filter_grid.children().get({0, 0, 0});
-					CHECK(filter.size() == filter_size);
+					auto const & filter_input = filter_input_grid.children().get({0, 0, 0});
+					CHECK(filter_input.size() == filter_input_shape);
 
-					for (auto const & filter_grid_pos : convfelt::iter::pos(filter))
+					for (auto const & filter_grid_pos : convfelt::iter::pos(filter_input))
 					{
 						CAPTURE(filter_grid_pos);
-						CHECK(filter.get(filter_grid_pos) == image_grid.get(filter_grid_pos));
+						CHECK(filter_input.get(filter_grid_pos) == image_grid.get(filter_grid_pos));
 					}
 				}
 				{
 					std::size_t num_nonzero = 0;
-					for (auto const & filter : convfelt::iter::val(filter_grid.children()))
+					for (auto const & filter_input :
+						 convfelt::iter::val(filter_input_grid.children()))
 					{
-						CHECK(filter.size() == filter_size);
+						CHECK(filter_input.size() == filter_input_shape);
 
-						for (auto const & [pos_idx, pos] : convfelt::iter::idx_and_pos(filter))
+						for (auto const & [pos_idx, pos] :
+							 convfelt::iter::idx_and_pos(filter_input))
 						{
-							Felt::Vec3i const filter_image_start_pos = filter_stride *
-								(pos.array() / filter_size.array()).matrix();
+							Felt::Vec3i const filter_image_start_pos =
+								filter_stride * (pos.array() / filter_input_shape.array()).matrix();
 
 							Felt::Vec3i const image_grid_pos = pos - filter_image_start_pos;
 
 							CAPTURE(pos);
 							CAPTURE(image_grid_pos);
-							CHECK(filter.get(pos_idx) == image_grid.get(image_grid_pos));
+							CHECK(filter_input.get(pos_idx) == image_grid.get(image_grid_pos));
 
-							if (filter.get(pos) != 0)
+							if (filter_input.get(pos) != 0)
 								++num_nonzero;
 						}
 					}
 					CHECK(num_nonzero > 0);
+				}
+			}
+
+			AND_GIVEN("an output grid and weight matrix")
+			{
+				Felt::Vec3i const filter_output_shape{2, 2, 4};
+				Felt::Vec3i const filter_output_grid_size =
+					(filter_input_grid.children().size().array() * filter_output_shape.array())
+						.matrix();
+
+				convfelt::ConvGrid filter_output_grid{
+					filter_output_grid_size, {0, 0, 0}, filter_output_shape, 0};
+
+				CHECK(filter_output_grid.children().size() == filter_input_grid.children().size());
+
+				Eigen::MatrixXf weights{filter_output_shape.prod(), filter_input_shape.prod()};
+				weights.setConstant(1);
+
+				WHEN("weight are applied to input to produce output")
+				{
+					using vclvec = viennacl::vector<convfelt::Scalar>;
+					using vclmat = viennacl::matrix<convfelt::Scalar>;
+
+					vclvec vcl_input(static_cast<vclvec::size_type>(filter_input_shape.prod()));
+					vclvec vcl_result(static_cast<vclvec::size_type>(filter_output_shape.prod()));
+					vclmat vcl_weights{
+						static_cast<vclvec::size_type>(weights.rows()),
+						static_cast<vclvec::size_type>(weights.cols())};
+					viennacl::copy(weights, vcl_weights);
+
+					for (auto const & pos_idx :
+						 convfelt::iter::pos_idx(filter_input_grid.children()))
+					{
+						viennacl::copy(
+							filter_input_grid.children().get(pos_idx).array(), vcl_input);
+
+						vcl_result = viennacl::linalg::prod(vcl_weights, vcl_input);
+
+						auto output_array = filter_output_grid.children().get(pos_idx).matrix();
+						viennacl::copy(vcl_result, output_array);
+					}
+
+					THEN("output data has expected values")
+					{
+						for (auto const & filter_pos_idx :
+							 convfelt::iter::pos_idx(filter_output_grid.children()))
+						{
+							convfelt::Scalar const expected =
+								filter_input_grid.children().get(filter_pos_idx).matrix().sum();
+
+							const Felt::Vec3i filter_pos =
+								filter_input_grid.children().index(filter_pos_idx);
+							CAPTURE(filter_pos);
+
+							for (auto const & actual : convfelt::iter::val(
+									 filter_output_grid.children().get(filter_pos_idx)))
+							{
+								CHECK(actual == expected);
+							}
+						}
+					}
 				}
 			}
 		}

@@ -27,18 +27,19 @@
 namespace convfelt
 {
 template <typename T, Felt::Dim D>
-using InputGrid = Felt::Impl::Grid::Simple<T, D>;
+using InputGridTD = Felt::Impl::Grid::Simple<T, D>;
+using InputGrid = InputGridTD<convfelt::Scalar, 3>;
 
 
 template <typename T, Felt::Dim D>
-class Filter
+class FilterTD
 	: FELT_MIXINS(
-		  (Filter<T, D>),
+		  (FilterTD<T, D>),
 		  (Grid::Access::ByValue)(Grid::Activate)(Grid::Data)(Grid::Resize)(Numeric::Snapshot),
 		  (Grid::Index))
 //{
 private:
-	using This = Filter<T, D>;
+	using This = FilterTD<T, D>;
 
 	using Traits = Felt::Impl::Traits<This>;
 	using Leaf = typename Traits::Leaf;
@@ -53,7 +54,7 @@ public:
 	using VecDi = Felt::VecDi<D>;
 	using typename SnapshotImpl::ArrayColMap;
 
-	explicit Filter(const Leaf background_) : ActivateImpl{background_} {}
+	explicit FilterTD(const Leaf background_) : ActivateImpl{background_} {}
 
 	using AccessImpl::get;
 	using AccessImpl::index;
@@ -68,13 +69,15 @@ public:
 	using SnapshotImpl::matrix;
 };
 
+using Filter = FilterTD<convfelt::Scalar, 3>;
+
 template <typename T, Felt::Dim D>
-class ConvGrid : FELT_MIXINS(
-					 (ConvGrid<T, D>),
+class ConvGridTD : FELT_MIXINS(
+					 (ConvGridTD<T, D>),
 					 (Grid::Size)(Partitioned::Access)(Partitioned::Children)(Partitioned::Leafs),
 					 (Grid::Index))
 private:
-	using This = ConvGrid<T, D>;
+	using This = ConvGridTD<T, D>;
 
 	using Traits = Felt::Impl::Traits<This>;
 	using Leaf = typename Traits::Leaf;
@@ -89,7 +92,7 @@ public:
 	using Child = typename Traits::Child;
 	using VecDi = Felt::VecDi<D>;
 
-	ConvGrid(
+	ConvGridTD(
 		const VecDi & size_,
 		const VecDi & offset_,
 		const VecDi & child_size_,
@@ -109,22 +112,25 @@ public:
 	using SizeImpl::offset;
 	using SizeImpl::size;
 };
+
+using ConvGrid = ConvGridTD<convfelt::Scalar, 3>;
+
 }  // namespace ConvFelt
 
 template <typename T, Felt::Dim D>
-struct Felt::Impl::Traits<convfelt::ConvGrid<T, D>>
+struct Felt::Impl::Traits<convfelt::ConvGridTD<T, D>>
 {
 	/// Single index stored in each grid node.
 	using Leaf = T;
 	/// Dimension of grid.
 	static constexpr Dim t_dims = D;
 
-	using Child = convfelt::Filter<T, D>;
+	using Child = convfelt::FilterTD<T, D>;
 	using Children = Felt::Impl::Tracked::SingleListSingleIdxByRef<Child, D>;
 };
 
 template <typename T, Felt::Dim D>
-struct Felt::Impl::Traits<convfelt::Filter<T, D>>
+struct Felt::Impl::Traits<convfelt::FilterTD<T, D>>
 {
 	using Leaf = T;
 	static constexpr Dim t_dims = D;

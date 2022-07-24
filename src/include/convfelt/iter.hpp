@@ -18,7 +18,7 @@ constexpr Felt::Dim DimFor = Felt::Impl::Traits<std::decay_t<G>>::t_dims;
 
 template <class G>
 using VecDiFor = Felt::VecDi<DimFor<G>>;
-}
+}  // namespace helpers
 
 namespace detail
 {
@@ -27,9 +27,15 @@ template <typename T>
 concept Grid = requires(T v)
 {
 	typename helpers::VecDiFor<T>;
-	{v.data().size()} -> std::same_as<Felt::PosIdx>;
 	{v.offset()} -> std::convertible_to<helpers::VecDiFor<T>>;
 	{v.size()} -> std::convertible_to<helpers::VecDiFor<T>>;
+};
+
+template <typename T>
+concept GridWithData = requires(T v)
+{
+	requires Grid<T>;
+	{v.data().size()} -> std::same_as<Felt::PosIdx>;
 };
 // clang-format on
 }  // namespace detail
@@ -37,6 +43,9 @@ concept Grid = requires(T v)
 // clang-format off
 template <typename T>
 concept Grid = requires(T) { requires detail::Grid<std::decay_t<T>>; };
+
+template <typename T>
+concept GridWithData = requires(T) { requires detail::GridWithData<std::decay_t<T>>; };
 
 template <typename T>
 concept Integral = requires { std::integral<std::decay<T>>; };
@@ -50,7 +59,7 @@ static constexpr auto idx(concepts::Integral auto &&... args)
 	return ranges::views::indices(std::forward<decltype(args)>(args)...);
 };
 
-static constexpr auto pos_idx(concepts::Grid auto && grid)
+static constexpr auto pos_idx(concepts::GridWithData auto && grid)
 {
 	return idx(grid.data().size());
 };
@@ -80,13 +89,12 @@ static inline auto idx_and_pos(concepts::Grid auto && grid)
 	}
 };
 
-
-static constexpr decltype(auto) val(concepts::Grid auto && grid)
+static constexpr decltype(auto) val(concepts::GridWithData auto && grid)
 {
 	return grid.data();
 };
 
-static constexpr auto idx_and_val(concepts::Grid auto && grid)
+static constexpr auto idx_and_val(concepts::GridWithData auto && grid)
 {
 	return ranges::views::enumerate(grid.data());
 };
