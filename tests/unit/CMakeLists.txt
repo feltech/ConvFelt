@@ -4,6 +4,7 @@
 add_executable(
 	convfelt.test.unit
 	main.cpp
+	test_ConvGrid.cpp
 	third_party.cpp
 )
 
