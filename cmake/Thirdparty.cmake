@@ -98,7 +98,7 @@ conan_cmake_configure(
 	REQUIRES
 
 	# Eigen linear algebra library
-	eigen/3.4.0
+	eigen/3.3.9
 
 	# OpenImageIO image loading/processing library
 	openimageio/2.2.18.0
