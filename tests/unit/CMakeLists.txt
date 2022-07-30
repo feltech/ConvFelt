@@ -25,7 +25,7 @@ target_link_system_libraries(
 	range-v3::range-v3
 )
 
-if (UNIX)
+if (CMAKE_CXX_COMPILER_ID STREQUAL GNU)
 	target_compile_options(
 		convfelt.test.unit
 		PRIVATE

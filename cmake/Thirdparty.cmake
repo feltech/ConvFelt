@@ -1,4 +1,34 @@
 #------------------------------------------------------------
+# System dependencies
+
+# Compiler-specific support.
+if (CMAKE_CXX_COMPILER_ID STREQUAL GNU)
+	add_compile_options(-fcoroutines)
+	add_link_options(-fcoroutines)
+elseif (CMAKE_CXX_COMPILER_ID MATCHES Clang)
+	add_compile_options(-fcoroutines-ts -stdlib=libc++)
+	add_link_options(-fcoroutines-ts -stdlib=libc++)
+endif ()
+
+# SyCL support
+if (NOT HIPSYCL_TARGETS)
+	set(HIPSYCL_TARGETS cuda.integrated-multipass:SM_86 CACHE STRING
+		"hipSycl compilation flow targets")
+endif ()
+if (NOT HIPSYCL_DEBUG_LEVEL)
+	if (CMAKE_BUILD_TYPE MATCHES "Debug")
+		set(HIPSYCL_DEBUG_LEVEL 3 CACHE INTEGER
+			"Choose the debug level, options are: 0 (no debug), 1 (print errors), 2 (also print warnings), 3 (also print general information)"
+			FORCE)
+	else ()
+		set(HIPSYCL_DEBUG_LEVEL 2 CACHE INTEGER
+			"Choose the debug level, options are: 0 (no debug), 1 (print errors), 2 (also print warnings), 3 (also print general information)"
+			FORCE)
+	endif ()
+endif ()
+find_package(hipSYCL REQUIRED CONFIG PATHS /opt/hipSYCL)
+
+#------------------------------------------------------------
 # Install CPM package manager
 
 set(CPM_DOWNLOAD_VERSION 0.34.0)
@@ -54,7 +84,6 @@ set(ENABLE_CLANG_TIDY_DEFAULT OFF)
 # Disable for now, since false positive compile error, i.e.
 # https://gcc.gnu.org/bugzilla/show_bug.cgi?id=95137#c42
 set(ENABLE_SANITIZER_UNDEFINED_BEHAVIOR_DEFAULT OFF)
-
 
 
 # Generate project_options and project_warnings INTERFACE targets.
@@ -134,14 +163,24 @@ conan_cmake_configure(
 
 conan_cmake_autodetect(conan_settings)
 
+if (NOT DEFINED CONVFELT_CONAN_PROFILE)
+	set(CONVFELT_CONAN_PROFILE default)
+endif ()
+if (NOT DEFINED CONVFELT_CONAN_REMOTE)
+	set(CONVFELT_CONAN_REMOTE conancenter)
+endif ()
+
 conan_cmake_install(
 	PATH_OR_REFERENCE ${CMAKE_CURRENT_BINARY_DIR}
 	BUILD missing
-	REMOTE conancenter
-	SETTINGS ${conan_settings}
+	REMOTE ${CONVFELT_CONAN_REMOTE}
+	PROFILE ${CONVFELT_CONAN_PROFILE}
+	#	SETTINGS ${conan_settings}
 )
 
 find_package(Eigen3 REQUIRED)
+# Work around Eigen<=3.4.0 C++20 incompatibility
+target_compile_definitions(Eigen3::Eigen INTERFACE EIGEN_HAS_STD_RESULT_OF=0)
 find_package(OpenImageIO REQUIRED)
 find_package(cppcoro REQUIRED)
 find_package(range-v3 REQUIRED)
