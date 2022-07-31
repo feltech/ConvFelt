@@ -25,6 +25,8 @@ target_link_system_libraries(
 	range-v3::range-v3
 )
 
+add_sycl_to_target(TARGET convfelt.test.unit)
+
 if (CMAKE_CXX_COMPILER_ID STREQUAL GNU)
 	target_compile_options(
 		convfelt.test.unit

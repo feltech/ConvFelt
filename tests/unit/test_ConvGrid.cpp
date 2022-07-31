@@ -1,5 +1,10 @@
-#include <catch2/catch.hpp>
+#include <CL/sycl.hpp>
+#ifdef SYCL_DEVICE_ONLY
+#undef SYCL_DEVICE_ONLY
+#endif
+#include <Eigen/Eigen>
 
+#include <catch2/catch.hpp>
 #include <convfelt/ConvGrid.hpp>
 #include <convfelt/iter.hpp>
 

@@ -27,8 +27,8 @@ template <typename T>
 concept Grid = requires(T v)
 {
 	typename helpers::VecDiFor<T>;
-	{v.offset()} -> std::convertible_to<helpers::VecDiFor<T>>;
-	{v.size()} -> std::convertible_to<helpers::VecDiFor<T>>;
+	{v.offset()} -> ranges::convertible_to<helpers::VecDiFor<T>>;
+	{v.size()} -> ranges::convertible_to<helpers::VecDiFor<T>>;
 };
 
 template <typename T>
@@ -48,7 +48,7 @@ template <typename T>
 concept GridWithData = requires(T) { requires detail::GridWithData<std::decay_t<T>>; };
 
 template <typename T>
-concept Integral = requires { std::integral<std::decay<T>>; };
+concept Integral = requires { ranges::integral<std::decay<T>>; };
 // clang-format on
 }  // namespace concepts
 

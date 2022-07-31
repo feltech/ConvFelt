@@ -7,10 +7,7 @@ target_compile_features(
 	INTERFACE
 	cxx_std_20
 )
-if (UNIX)
-	target_compile_options(convfelt INTERFACE -fcoroutines)
-	target_link_options(convfelt INTERFACE -fcoroutines)
-endif ()
+
 
 target_include_directories(
 	convfelt
@@ -19,7 +16,13 @@ target_include_directories(
 	$<INSTALL_INTERFACE:${CMAKE_INSTALL_INCLUDEDIR}>
 )
 
-target_link_system_libraries(convfelt INTERFACE Eigen3::Eigen ViennaCL::viennacl felt)
+target_link_system_libraries(convfelt INTERFACE
+	range-v3::range-v3
+	Eigen3::Eigen
+	ViennaCL::viennacl
+	cppcoro::cppcoro
+
+	felt)
 
 target_compile_definitions(
 	convfelt

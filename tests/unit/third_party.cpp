@@ -1,11 +1,26 @@
-#include <ranges>
-
+#include <CL/sycl.hpp>
+#ifdef SYCL_DEVICE_ONLY
+#undef SYCL_DEVICE_ONLY
+#endif
+#include <Eigen/Eigen>
 #include <catch2/catch.hpp>
+#include <cppcoro/static_thread_pool.hpp>
+#include <cppcoro/sync_wait.hpp>
+#include <cppcoro/task.hpp>
+#include <viennacl/matrix.hpp>
+#include <viennacl/meta/result_of.hpp>
+#include <viennacl/vector.hpp>
 
+#include <convfelt/ConvGrid.hpp>
+#include <convfelt/Numeric.hpp>
+#include <convfelt/iter.hpp>
+#ifdef __CUDACC__
+#ifndef __CUDA_ARCH__
+#undef __CUDACC__
+#endif
+#endif
 #include <OpenImageIO/imagebufalgo.h>
 #include <OpenImageIO/imageio.h>
-
-#include <viennacl/meta/result_of.hpp>
 namespace viennacl
 {
 namespace result_of
@@ -32,18 +47,6 @@ inline std::size_t size1(Eigen::Map<PlainObjectType, MapOptions, StrideType> con
 }
 }  // namespace traits
 }  // namespace viennacl
-
-#include <Felt/Impl/Grid.hpp>
-#include <cppcoro/static_thread_pool.hpp>
-#include <cppcoro/sync_wait.hpp>
-#include <cppcoro/task.hpp>
-#include <viennacl/device_specific/builtin_database/common.hpp>
-#include <viennacl/matrix.hpp>
-#include <viennacl/vector.hpp>
-
-#include <convfelt/ConvGrid.hpp>
-#include <convfelt/Numeric.hpp>
-#include <convfelt/iter.hpp>
 
 SCENARIO("Loading ViennaCL")
 {
@@ -492,6 +495,48 @@ SCENARIO("Input/output ConvGrids")
 						check_output();
 					}
 				}  // WHEN("weight are applied to input to produce output all at once")
+			}
+		}
+	}
+}
+
+SCENARIO("Basic SyCL usage")
+{
+	GIVEN("Input vectors")
+	{
+		std::vector<float> a = {1.f, 2.f, 3.f, 4.f, 5.f};
+		std::vector<float> b = {-1.f, 2.f, -3.f, 4.f, -5.f};
+		std::vector<float> c(a.size());
+		assert(a.size() == b.size());
+
+		WHEN("vectors are added using sycl")
+		{
+			{
+				cl::sycl::gpu_selector selector;
+				cl::sycl::queue q{selector};
+				cl::sycl::range<1> work_items{a.size()};
+				cl::sycl::buffer<float> buff_a(a.data(), a.size());
+				cl::sycl::buffer<float> buff_b(b.data(), b.size());
+				cl::sycl::buffer<float> buff_c(c.data(), c.size());
+
+				q.submit(
+					[&](cl::sycl::handler & cgh)
+					{
+						auto access_a = buff_a.get_access<cl::sycl::access::mode::read>(cgh);
+						auto access_b = buff_b.get_access<cl::sycl::access::mode::read>(cgh);
+						auto access_c = buff_c.get_access<cl::sycl::access::mode::write>(cgh);
+
+						cgh.parallel_for<class vector_add>(
+							work_items,
+							[=](cl::sycl::id<1> tid)
+							{ access_c[tid] = access_a[tid] + access_b[tid]; });
+					});
+			}
+			THEN("result is as expected")
+			{
+				std::vector<float> expected = {0.f, 4.f, 0.f, 8.f, 0.f};
+
+				CHECK(c == expected);
 			}
 		}
 	}

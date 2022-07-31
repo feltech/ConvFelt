@@ -3,16 +3,36 @@
 
 # Compiler-specific support.
 if (CMAKE_CXX_COMPILER_ID STREQUAL GNU)
-	add_compile_options(-fcoroutines)
-	add_link_options(-fcoroutines)
+	add_compile_options(-fcoroutines -Wno-error=unknown-cuda-version)
+	add_link_options(-fcoroutines -Wno-error=unknown-cuda-version)
 elseif (CMAKE_CXX_COMPILER_ID MATCHES Clang)
-	add_compile_options(-fcoroutines-ts -stdlib=libc++)
-	add_link_options(-fcoroutines-ts -stdlib=libc++)
+	add_compile_options(
+		-Wno-error=unknown-cuda-version
+		-Wno-error=unused-command-line-argument
+		-Qunused-arguments
+		-fcoroutines-ts
+		#-fcoroutines
+		-stdlib=libc++
+	)
+	add_link_options(
+		-Wno-error=unknown-cuda-version
+		-Wno-error=unused-command-line-argument
+		-Qunused-arguments
+		-fcoroutines-ts
+		#-fcoroutines
+		-stdlib=libc++
+	)
+	add_compile_definitions(
+		# Trick libstdc++ into thinking -fcoroutines has been given (as opposed to -fcoroutines-ts)
+#		__cpp_impl_coroutine=201902L
+		# OpenEXR redefines half
+		_HALF_H_
+	)
 endif ()
 
 # SyCL support
 if (NOT HIPSYCL_TARGETS)
-	set(HIPSYCL_TARGETS cuda.integrated-multipass:SM_86 CACHE STRING
+	set(HIPSYCL_TARGETS cuda.integrated-multipass:sm_86 CACHE STRING
 		"hipSycl compilation flow targets")
 endif ()
 if (NOT HIPSYCL_DEBUG_LEVEL)
@@ -26,7 +46,19 @@ if (NOT HIPSYCL_DEBUG_LEVEL)
 			FORCE)
 	endif ()
 endif ()
-find_package(hipSYCL REQUIRED CONFIG PATHS /opt/hipSYCL)
+find_package(hipSYCL REQUIRED CONFIG HINTS
+	/home/dave/workspace/hipSYCL/cmake-build-release-clang-14/dist
+	)
+
+message(WARNING "Using hipSyCL from ${hipSYCL_DIR}")
+
+if (NOT DEFINED $ENV{HIPSYCL_CUDA_PATH} AND HIPSYCL_TARGETS MATCHES cuda)
+	message(WARNING
+		"HIPSYCL_CUDA_PATH env var not set despite hipSyCL CUDA target - may fail to find CUDA")
+endif()
+
+add_definitions(-DHIPSYCL_DEBUG_LEVEL=${HIPSYCL_DEBUG_LEVEL})
+
 
 #------------------------------------------------------------
 # Install CPM package manager
@@ -79,6 +111,10 @@ set(ENABLE_SANITIZER_ADDRESS_DEFAULT OFF)
 #   LSAN_OPTIONS=suppressions=lsan.supp
 # With the above workarounds, OPT_ENABLE_SANITIZER_ADDRESS can be enabled.
 
+# nvcc doesn't support -Werror... or -std=c++20
+#set(WARNINGS_AS_ERRORS_DEFAULT OFF)
+# Disable ccache as it confuses the hipSyCl compiler introspection (see syclcc-launcher)
+set(ENABLE_CACHE_DEFAULT OFF)
 # Disable for now, since -fcoroutines is not supported by Clang, but libstdc++ asserts on it.
 set(ENABLE_CLANG_TIDY_DEFAULT OFF)
 # Disable for now, since false positive compile error, i.e.
@@ -126,11 +162,15 @@ endif ()
 conan_cmake_configure(
 	REQUIRES
 
+	# String formatting. Must override dependency of openimageio or get ambiguous calls to
+	# `std::signbit` et al.
+	fmt/7.1.3
+
 	# Eigen linear algebra library
-	eigen/3.3.9
+	eigen/3.4.0
 
 	# OpenImageIO image loading/processing library
-	openimageio/2.2.18.0
+	openimageio/2.3.7.2
 
 	# cppcoro coroutines library
 	andreasbuhr-cppcoro/cci.20210113
@@ -141,7 +181,7 @@ conan_cmake_configure(
 	GENERATORS cmake_find_package
 
 	OPTIONS
-	openimageio:shared=False
+	openimageio:shared=True
 	openimageio:fPIC=True
 	openimageio:with_libjpeg=libjpeg
 	openimageio:with_libpng=True
