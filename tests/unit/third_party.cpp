@@ -1,13 +1,14 @@
 #include <span>
 
-#include <CL/sycl.hpp>
 #include <sycl/sycl.hpp>
 namespace sycl
 {
+// Required for MKL.
 template <typename... Args>
 using span = std::span<Args...>;
 }
 #include <oneapi/mkl.hpp>
+// Required for Eigen.
 #ifdef SYCL_DEVICE_ONLY
 #undef SYCL_DEVICE_ONLY
 #endif
@@ -23,6 +24,7 @@ using span = std::span<Args...>;
 #include <convfelt/ConvGrid.hpp>
 #include <convfelt/Numeric.hpp>
 #include <convfelt/iter.hpp>
+// Required for OpenImageIO
 #ifdef __CUDACC__
 #ifndef __CUDA_ARCH__
 #undef __CUDACC__
@@ -521,23 +523,23 @@ SCENARIO("Basic SyCL usage")
 		WHEN("vectors are added using sycl")
 		{
 			{
-				cl::sycl::gpu_selector selector;
-				cl::sycl::queue q{selector};
-				cl::sycl::range<1> work_items{a.size()};
-				cl::sycl::buffer<float> buff_a(a.data(), a.size());
-				cl::sycl::buffer<float> buff_b(b.data(), b.size());
-				cl::sycl::buffer<float> buff_c(c.data(), c.size());
+				sycl::gpu_selector selector;
+				sycl::queue q{selector};
+				sycl::range<1> work_items{a.size()};
+				sycl::buffer<float> buff_a(a.data(), a.size());
+				sycl::buffer<float> buff_b(b.data(), b.size());
+				sycl::buffer<float> buff_c(c.data(), c.size());
 
 				q.submit(
-					[&](cl::sycl::handler & cgh)
+					[&](sycl::handler & cgh)
 					{
-						auto access_a = buff_a.get_access<cl::sycl::access::mode::read>(cgh);
-						auto access_b = buff_b.get_access<cl::sycl::access::mode::read>(cgh);
-						auto access_c = buff_c.get_access<cl::sycl::access::mode::write>(cgh);
+						auto access_a = buff_a.get_access<sycl::access::mode::read>(cgh);
+						auto access_b = buff_b.get_access<sycl::access::mode::read>(cgh);
+						auto access_c = buff_c.get_access<sycl::access::mode::write>(cgh);
 
 						cgh.parallel_for<class vector_add>(
 							work_items,
-							[=](cl::sycl::id<1> tid)
+							[=](sycl::id<1> tid)
 							{ access_c[tid] = access_a[tid] + access_b[tid]; });
 					});
 			}
@@ -562,11 +564,11 @@ SCENARIO("Basic oneMKL usage")
 		WHEN("vectors are added using oneMKL")
 		{
 			{
-				cl::sycl::gpu_selector selector;
-				cl::sycl::queue q{selector};
-				cl::sycl::range<1> work_items{a.size()};
-				cl::sycl::buffer<float> buff_a(a.data(), a.size());
-				cl::sycl::buffer<float> buff_b(b.data(), b.size());
+				sycl::gpu_selector selector;
+				sycl::queue q{selector};
+				sycl::range<1> work_items{a.size()};
+				sycl::buffer<float> buff_a(a.data(), a.size());
+				sycl::buffer<float> buff_b(b.data(), b.size());
 
 				oneapi::mkl::blas::column_major::axpy(
 					q, static_cast<long>(a.size()), 1.0f, buff_a, 1, buff_b, 1);
