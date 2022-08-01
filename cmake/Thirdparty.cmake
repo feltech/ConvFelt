@@ -2,62 +2,41 @@
 # System dependencies
 
 # Compiler-specific support.
-if (CMAKE_CXX_COMPILER_ID STREQUAL GNU)
-	add_compile_options(-fcoroutines -Wno-error=unknown-cuda-version)
-	add_link_options(-fcoroutines -Wno-error=unknown-cuda-version)
+if (NOT CMAKE_CXX_COMPILER_ID MATCHES Clang)
+	message(FATAL_ERROR "hipSYCL dependency requires clang compiler for all features ("
+		"esp. coroutines) to be available")
 elseif (CMAKE_CXX_COMPILER_ID MATCHES Clang)
 	add_compile_options(
 		-Wno-error=unknown-cuda-version
-		-Wno-error=unused-command-line-argument
-		-Qunused-arguments
 		-fcoroutines-ts
-		#-fcoroutines
 		-stdlib=libc++
 	)
 	add_link_options(
 		-Wno-error=unknown-cuda-version
-		-Wno-error=unused-command-line-argument
 		-Qunused-arguments
 		-fcoroutines-ts
-		#-fcoroutines
 		-stdlib=libc++
 	)
 	add_compile_definitions(
 		# Trick libstdc++ into thinking -fcoroutines has been given (as opposed to -fcoroutines-ts)
-#		__cpp_impl_coroutine=201902L
+		# Note: then it fails for other reasons.
+		#		__cpp_impl_coroutine=201902L
 		# OpenEXR redefines half
 		_HALF_H_
 	)
 endif ()
 
+#------------------------------------------------------------
 # SyCL support
+
 if (NOT HIPSYCL_TARGETS)
-	set(HIPSYCL_TARGETS cuda.integrated-multipass:sm_86 CACHE STRING
+	set(HIPSYCL_TARGETS cuda.integrated-multipass:sm_70 CACHE STRING
 		"hipSycl compilation flow targets")
 endif ()
-if (NOT HIPSYCL_DEBUG_LEVEL)
-	if (CMAKE_BUILD_TYPE MATCHES "Debug")
-		set(HIPSYCL_DEBUG_LEVEL 3 CACHE INTEGER
-			"Choose the debug level, options are: 0 (no debug), 1 (print errors), 2 (also print warnings), 3 (also print general information)"
-			FORCE)
-	else ()
-		set(HIPSYCL_DEBUG_LEVEL 2 CACHE INTEGER
-			"Choose the debug level, options are: 0 (no debug), 1 (print errors), 2 (also print warnings), 3 (also print general information)"
-			FORCE)
-	endif ()
-endif ()
-find_package(hipSYCL REQUIRED CONFIG HINTS
-	/home/dave/workspace/hipSYCL/cmake-build-release-clang-14/dist
-	)
 
-message(WARNING "Using hipSyCL from ${hipSYCL_DIR}")
+find_package(hipSYCL REQUIRED CONFIG)
 
-if (NOT DEFINED $ENV{HIPSYCL_CUDA_PATH} AND HIPSYCL_TARGETS MATCHES cuda)
-	message(WARNING
-		"HIPSYCL_CUDA_PATH env var not set despite hipSyCL CUDA target - may fail to find CUDA")
-endif()
-
-add_definitions(-DHIPSYCL_DEBUG_LEVEL=${HIPSYCL_DEBUG_LEVEL})
+message(STATUS "ConvFelt: Using hipSyCL from ${hipSYCL_DIR}")
 
 
 #------------------------------------------------------------
@@ -93,6 +72,41 @@ endif ()
 
 include(${CMAKE_BINARY_DIR}/conan.cmake)
 
+#------------------------------------------------------------
+# SYCL-BLAS
+# Broken for hipSYCL: https://github.com/codeplaysoftware/sycl-blas/issues/303
+
+#CPMAddPackage(
+#	NAME SyclBLAS
+#	GIT_TAG master
+#	GIT_REPOSITORY https://github.com/codeplaysoftware/sycl-blas.git
+#	OPTIONS
+#	"BLAS_BUILD_SAMPLES OFF"
+#	"BLAS_ENABLE_TESTING OFF"
+#	"BLAS_ENABLE_BENCHMARK OFF"
+#	"SYCL_COMPILER hipsycl"
+#	"BUILD_SHARED_LIBS ON"
+#	"BLAS_ENABLE_CONST_INPUT ON"
+#	"ENABLE_EXPRESSION_TESTS OFF"
+#	"BLAS_VERIFY_BENCHMARK OFF"
+#	"BLAS_ENABLE_EXTENSIONS ON"
+#)
+#find_package(SyclBLAS REQUIRED)
+
+# Compilation fails because of a missing function signature. Disabling BLAS_ENABLE_CONST_INPUT
+# should skip that bit of code, but it doesn't because of a bug - #ifdef is used rather than
+# checking the value.
+#get_directory_property(defs ${SyclBLAS_SOURCE_DIR}/src/policy COMPILE_DEFINITIONS)
+#list(FILTER defs EXCLUDE REGEX BLAS_ENABLE_CONST_INPUT)
+#set_property(DIRECTORY ${SyclBLAS_SOURCE_DIR}/src/policy PROPERTY COMPILE_DEFINITIONS ${defs})
+
+
+#------------------------------------------------------------
+# MKL
+# APT package doesn't work with libc++, must build.
+find_package(oneMKL CONFIG REQUIRED)
+message(STATUS "${MKL_IMPORTED_TARGETS}") #Provides available list of targets based on input
+target_compile_definitions(MKL::onemkl INTERFACE ENABLE_CUBLAS_BACKEND)
 
 #------------------------------------------------------------
 # Add project_options CMake library

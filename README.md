@@ -3,6 +3,8 @@
 * Ubuntu 20.04
 * `hipSyCL` patched to build clang plugin with `libstdc++` and rest with `libc++`.
    Tested target `cuda.integrated-multipass:sm_70`.
+  - Attempting to include as a subproject (e.g. CPM package) is tricky. It must be installed to
+    give the CMake helper function. But it must also be patched to allow `libc++`.
 * `clang-14` compiler using `libc++`
     - `libstdc++` is used by hipSyCL apt package. Attempting to use `libc++` whilst lnking to that
       gives

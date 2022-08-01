@@ -23,7 +23,11 @@ target_link_system_libraries(
 	OpenImageIO::OpenImageIO
 	cppcoro::cppcoro
 	range-v3::range-v3
+	MKL::onemkl
+#	MKL::onemkl_blas_cublas
+#	SyclBLAS # Broken for hipSYCL
 )
+
 
 add_sycl_to_target(TARGET convfelt.test.unit)
 

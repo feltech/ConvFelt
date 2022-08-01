@@ -1,4 +1,13 @@
+#include <span>
+
 #include <CL/sycl.hpp>
+#include <sycl/sycl.hpp>
+namespace sycl
+{
+template <typename... Args>
+using span = std::span<Args...>;
+}
+#include <oneapi/mkl.hpp>
 #ifdef SYCL_DEVICE_ONLY
 #undef SYCL_DEVICE_ONLY
 #endif
@@ -537,6 +546,36 @@ SCENARIO("Basic SyCL usage")
 				std::vector<float> expected = {0.f, 4.f, 0.f, 8.f, 0.f};
 
 				CHECK(c == expected);
+			}
+		}
+	}
+}
+
+SCENARIO("Basic oneMKL usage")
+{
+	GIVEN("Input vectors")
+	{
+		std::vector<float> a = {1.f, 2.f, 3.f, 4.f, 5.f};
+		std::vector<float> b = {-1.f, 2.f, -3.f, 4.f, -5.f};
+		assert(a.size() == b.size());
+
+		WHEN("vectors are added using oneMKL")
+		{
+			{
+				cl::sycl::gpu_selector selector;
+				cl::sycl::queue q{selector};
+				cl::sycl::range<1> work_items{a.size()};
+				cl::sycl::buffer<float> buff_a(a.data(), a.size());
+				cl::sycl::buffer<float> buff_b(b.data(), b.size());
+
+				oneapi::mkl::blas::column_major::axpy(
+					q, static_cast<long>(a.size()), 1.0f, buff_a, 1, buff_b, 1);
+			}
+			THEN("result is as expected")
+			{
+				std::vector<float> expected = {0.f, 4.f, 0.f, 8.f, 0.f};
+
+				CHECK(b == expected);
 			}
 		}
 	}
