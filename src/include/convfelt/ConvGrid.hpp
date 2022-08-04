@@ -33,7 +33,9 @@
  */
 
 
-namespace Felt::Impl::Mixin
+namespace Felt::Impl
+{
+namespace Mixin
 {
 namespace Numeric
 {
@@ -84,7 +86,6 @@ protected:
 
 namespace Grid
 {
-
 
 template <class TDerived>
 class DataSpan
@@ -160,6 +161,43 @@ protected:
 };
 
 }
+}
+
+template <typename T, Dim D>
+class ByRef :
+	FELT_MIXINS(
+		(ByRef<T, D>),
+		(Grid::Access::ByRef)(Grid::Activate)(Grid::Data)(Grid::Size),
+		(Grid::Index))
+//{
+private:
+	using This = ByRef<T, D>;
+	using Traits = Impl::Traits<This>;
+
+	using AccessImpl = Impl::Mixin::Grid::Access::ByRef<This>;
+	using ActivateImpl = Impl::Mixin::Grid::Activate<This>;
+	using DataImpl = Impl::Mixin::Grid::Data<This>;
+	using SizeImpl = Impl::Mixin::Grid::Size<This>;
+
+	using VecDi = Felt::VecDi<Traits::t_dims>;
+	using Leaf = typename Traits::Leaf;
+
+public:
+	ByRef(const VecDi & size_, const VecDi & offset_, const Leaf background_)
+		: ActivateImpl{background_},
+		  SizeImpl{size_, offset_}
+	{
+		ActivateImpl::activate();
+	}
+
+	using AccessImpl::get;
+	using AccessImpl::index;
+	using ActivateImpl::activate;
+	using DataImpl::assert_pos_idx_bounds;
+	using DataImpl::data;
+	using SizeImpl::offset;
+	using SizeImpl::size;
+};
 }
 
 namespace convfelt
@@ -298,8 +336,10 @@ using Filter = FilterTD<convfelt::Scalar, 3>;
 
 }  // namespace convfelt
 
+namespace Felt::Impl
+{
 template <typename T, Felt::Dim D>
-struct Felt::Impl::Traits<convfelt::ConvGridTD<T, D>>
+struct Traits<convfelt::ConvGridTD<T, D>>
 {
 	/// Single index stored in each grid node.
 	using Leaf = T;
@@ -307,12 +347,28 @@ struct Felt::Impl::Traits<convfelt::ConvGridTD<T, D>>
 	static constexpr Dim t_dims = D;
 
 	using Child = convfelt::FilterTD<T, D>;
-	using Children = Felt::Impl::Tracked::SingleListSingleIdxByRef<Child, D>;
+	using Children = Felt::Impl::ByRef<Child, D>;
 };
 
 template <typename T, Felt::Dim D>
-struct Felt::Impl::Traits<convfelt::FilterTD<T, D>>
+struct Traits<convfelt::FilterTD<T, D>>
 {
 	using Leaf = T;
 	static constexpr Dim t_dims = D;
 };
+
+/**
+ * Traits for Tracked::ByRef.
+ *
+ * @tparam T type of data to store in the grid.
+ * @tparam D number of dimensions of the grid.
+ */
+template <typename T, Felt::Dim D>
+struct Traits<Felt::Impl::ByRef<T, D>>
+{
+	/// Single index stored in each grid node.
+	using Leaf = T;
+	/// Dimension of grid.
+	static constexpr Dim t_dims = D;
+};
+}
