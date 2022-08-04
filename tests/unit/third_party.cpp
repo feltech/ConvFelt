@@ -6,7 +6,7 @@ namespace sycl
 // Required for MKL.
 template <typename... Args>
 using span = std::span<Args...>;
-}
+}  // namespace sycl
 #include <oneapi/mkl.hpp>
 // Required for Eigen.
 #ifdef SYCL_DEVICE_ONLY
@@ -530,6 +530,11 @@ SCENARIO("Basic SyCL usage")
 				sycl::buffer<float> buff_b(b.data(), b.size());
 				sycl::buffer<float> buff_c(c.data(), c.size());
 
+				using Allocator = sycl::usm_allocator<float, sycl::usm::alloc::shared>;
+				std::vector<float,Allocator> vals(Allocator{q});
+				vals.push_back(1);
+				vals.push_back(2);
+
 				q.submit(
 					[&](sycl::handler & cgh)
 					{
@@ -540,12 +545,12 @@ SCENARIO("Basic SyCL usage")
 						cgh.parallel_for<class vector_add>(
 							work_items,
 							[=](sycl::id<1> tid)
-							{ access_c[tid] = access_a[tid] + access_b[tid]; });
+							{ access_c[tid] = access_a[tid] + access_b[tid] + vals[0] + vals[1]; });
 					});
 			}
 			THEN("result is as expected")
 			{
-				std::vector<float> expected = {0.f, 4.f, 0.f, 8.f, 0.f};
+				std::vector<float> expected = {3.f, 7.f, 3.f, 11.f, 3.f};
 
 				CHECK(c == expected);
 			}
@@ -566,7 +571,6 @@ SCENARIO("Basic oneMKL usage")
 			{
 				sycl::gpu_selector selector;
 				sycl::queue q{selector};
-				sycl::range<1> work_items{a.size()};
 				sycl::buffer<float> buff_a(a.data(), a.size());
 				sycl::buffer<float> buff_b(b.data(), b.size());
 
