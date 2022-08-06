@@ -21,7 +21,7 @@ target_link_system_libraries(convfelt INTERFACE
 	Eigen3::Eigen
 	ViennaCL::viennacl
 	cppcoro::cppcoro
-
+	hipSYCL::hipSYCL-rt
 	felt)
 
 target_compile_definitions(

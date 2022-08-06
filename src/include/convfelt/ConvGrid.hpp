@@ -3,6 +3,7 @@
 #include <span>
 
 #include <viennacl/tools/tools.hpp>
+#include <sycl/sycl.hpp>
 
 #include <Felt/Impl/Common.hpp>
 #include <Felt/Impl/Mixin/GridMixin.hpp>
@@ -32,6 +33,13 @@
  * The output spatial partition size is the filter's output size (Cw, Ch, Cd).
  */
 
+namespace convfelt
+{
+template <class Traits>
+concept uses_usm_allocator = std::same_as<
+	typename Traits::Allocator,
+	sycl::usm_allocator<typename Traits::Leaf, sycl::usm::alloc::shared>>;
+}
 
 namespace Felt::Impl
 {
@@ -98,10 +106,18 @@ private:
 	using VecDi = Felt::VecDi<t_dims>;
 
 protected:
-	using DataArray = std::span<Leaf>;
+	using DataArray = typename Traits::DataArray;
 	DataArray m_data;
 
 protected:
+	DataSpan(sycl::context ctx, sycl::device dev)
+		requires convfelt::uses_usm_allocator<Traits>
+	: m_data{sycl::usm_allocator<Leaf, sycl::usm::alloc::shared>{std::move(ctx), std::move(dev)}}
+	{
+	}
+
+	DataSpan() = default;
+
 	DataArray & data()
 	{
 		return m_data;
@@ -123,69 +139,81 @@ protected:
 		ar(m_data);
 	}
 
-	/**
-	 * Check if given position's index is within the data array and raise a domain_error if not.
-	 *
-	 * @param pos_idx_ position in grid to query.
-	 * @param title_ message to include in generated exception.
-	 */
-	void assert_pos_idx_bounds(const PosIdx pos_idx_, std::string title_) const
-	{
-		assert_pos_idx_bounds(pself->index(pos_idx_), title_);
-	}
-
-	/**
-	 * Check if given position's index is within the data array and raise a domain_error if not.
-	 *
-	 * @param pos_ position in grid to query.
-	 * @param title_ message to include in generated exception.
-	 */
-	void assert_pos_idx_bounds(const VecDi & pos_, std::string title_) const
-	{
-		const PosIdx pos_idx = pself->index(pos_);
-
-		if (pos_idx > pself->data().size())
-		{
-			const VecDi & pos_min = pself->offset();
-			const VecDi & pos_max = (pself->size() + pos_min - VecDi::Constant(1));
-			std::stringstream err;
-			err << title_ << format(pos_.transpose()) << " data index " << pos_idx
-				<< " is greater than data size " << pself->data().size() << " for grid "
-				<< format(pos_min) << "-" << format(pos_max) << std::endl;
-			std::string err_str = err.str();
-			throw std::domain_error(err_str);
-		}
-
-		pself->assert_pos_bounds(pos_, title_);
-	}
+//	/**
+//	 * Check if given position's index is within the data array and raise a domain_error if not.
+//	 *
+//	 * @param pos_idx_ position in grid to query.
+//	 * @param title_ message to include in generated exception.
+//	 */
+//	void assert_pos_idx_bounds(const PosIdx pos_idx_, std::string_view title_) const
+//	{
+//		assert_pos_idx_bounds(pself->index(pos_idx_), title_);
+//	}
+//
+//	/**
+//	 * Check if given position's index is within the data array and raise a domain_error if not.
+//	 *
+//	 * @param pos_ position in grid to query.
+//	 * @param title_ message to include in generated exception.
+//	 */
+//	void assert_pos_idx_bounds(const VecDi & pos_, std::string_view title_) const
+//	{
+//		const PosIdx pos_idx = pself->index(pos_);
+//
+//		if (pos_idx > pself->data().size())
+//		{
+//			const VecDi & pos_min = pself->offset();
+//			const VecDi & pos_max = (pself->size() + pos_min - VecDi::Constant(1));
+//			std::stringstream err;
+//			err << title_ << format(pos_.transpose()) << " data index " << pos_idx
+//				<< " is greater than data size " << pself->data().size() << " for grid "
+//				<< format(pos_min) << "-" << format(pos_max) << std::endl;
+//			std::string err_str = err.str();
+//			throw std::domain_error(err_str);
+//		}
+//
+//		pself->assert_pos_bounds(pos_, title_);
+//	}
 };
 
 }
 }
 
-template <typename T, Dim D>
+template <typename T, Dim D, template <typename> class A>
 class ByRef :
 	FELT_MIXINS(
-		(ByRef<T, D>),
-		(Grid::Access::ByRef)(Grid::Activate)(Grid::Data)(Grid::Size),
+		(ByRef<T, D, A>),
+		(Grid::Access::ByRef)(Grid::Activate)(Grid::DataSpan)(Grid::Size),
 		(Grid::Index))
 //{
 private:
-	using This = ByRef<T, D>;
+	using This = ByRef<T, D, A>;
 	using Traits = Impl::Traits<This>;
 
 	using AccessImpl = Impl::Mixin::Grid::Access::ByRef<This>;
 	using ActivateImpl = Impl::Mixin::Grid::Activate<This>;
-	using DataImpl = Impl::Mixin::Grid::Data<This>;
+	using DataImpl = Impl::Mixin::Grid::DataSpan<This>;
 	using SizeImpl = Impl::Mixin::Grid::Size<This>;
 
 	using VecDi = Felt::VecDi<Traits::t_dims>;
 	using Leaf = typename Traits::Leaf;
 
 public:
-	ByRef(const VecDi & size_, const VecDi & offset_, const Leaf background_)
-		: ActivateImpl{background_},
+	ByRef(const VecDi & size_, const VecDi & offset_, Leaf background_)
+		: ActivateImpl{std::move(background_)},
 		  SizeImpl{size_, offset_}
+	{
+		ActivateImpl::activate();
+	}
+
+	ByRef(
+		const VecDi & size_,
+		const VecDi & offset_,
+		Leaf background_,
+		sycl::context context,
+		sycl::device device)
+		requires convfelt::uses_usm_allocator<Traits>
+	: ActivateImpl{std::move(background_)}, DataImpl{context, device}, SizeImpl{size_, offset_}
 	{
 		ActivateImpl::activate();
 	}
@@ -193,7 +221,7 @@ public:
 	using AccessImpl::get;
 	using AccessImpl::index;
 	using ActivateImpl::activate;
-	using DataImpl::assert_pos_idx_bounds;
+//	using DataImpl::assert_pos_idx_bounds;
 	using DataImpl::data;
 	using SizeImpl::offset;
 	using SizeImpl::size;
@@ -206,22 +234,21 @@ template <typename T, Felt::Dim D>
 using InputGridTD = Felt::Impl::Grid::Simple<T, D>;
 using InputGrid = InputGridTD<convfelt::Scalar, 3>;
 
-template <typename T, Felt::Dim D>
+template <typename T, Felt::Dim D, template <typename> class A = std::allocator>
 class ConvGridTD
 	: FELT_MIXINS(
-		  (ConvGridTD<T, D>),
-		  (Grid::Activate)(Grid::Data)(Grid::Size)(Partitioned::Access)(Partitioned::Children)(
+		  (ConvGridTD<T, D, A>),
+		  (Grid::Activate)(Grid::DataSpan)(Grid::Size)(Partitioned::Access)(Partitioned::Children)(
 			  Partitioned::Leafs)(Numeric::PartitionedAsColMajorMatrix),
 		  (Grid::Index))
-//{
+	  //{
 private:
-	using This = ConvGridTD<T, D>;
+	using This = ConvGridTD<T, D, A>;
 	using Traits = Felt::Impl::Traits<This>;
-	using Leaf = typename Traits::Leaf;
 
 	using AccessImpl = Felt::Impl::Mixin::Partitioned::Access<This>;
 	using ChildrenImpl = Felt::Impl::Mixin::Partitioned::Children<This>;
-	using DataImpl = Felt::Impl::Mixin::Grid::Data<This>;
+	using DataImpl = Felt::Impl::Mixin::Grid::DataSpan<This>;
 	using LeafsImpl = Felt::Impl::Mixin::Partitioned::Leafs<This>;
 	using PartitionedAsColMajorMatrixImpl =
 		Felt::Impl::Mixin::Numeric::PartitionedAsColMajorMatrix<This>;
@@ -232,13 +259,54 @@ public:
 	using Child = typename Traits::Child;
 	using VecDi = Felt::VecDi<D>;
 
+	ConvGridTD(const VecDi & size_, const Felt::VecDi<D - 1> & child_size_)
+		: ConvGridTD{size_, calc_child_size(child_size_, size_), {0, 0, 0}}
+	{
+	}
+
+	ConvGridTD(const VecDi & size_, const VecDi & child_size_)
+		: ConvGridTD{size_, child_size_, {0, 0, 0}}
+	{
+	}
+
 	ConvGridTD(
-		const VecDi & size_, const VecDi & child_size_, const VecDi & offset_ = VecDi::Zero())
+		const VecDi & size_,
+		const Felt::VecDi<D - 1> & child_size_,
+		sycl::context context,
+		sycl::device device)
+		requires uses_usm_allocator<Traits>
+	: DataImpl{context, device},
+	  SizeImpl{size_, {0, 0, 0}},
+	  ChildrenImpl{size_, {0, 0, 0}, calc_child_size(child_size_, size_), Child{}, context, device},
+	  PartitionedAsColMajorMatrixImpl{ChildrenImpl::child_size(), ChildrenImpl::children().size()}
+	{
+		initialise();
+	}
+
+	ConvGridTD(const VecDi & size_, const VecDi & child_size_, const VecDi & offset_)
 		: SizeImpl{size_, offset_},
 		  ChildrenImpl{size_, offset_, child_size_, Child{}},
 		  PartitionedAsColMajorMatrixImpl{
-			  ChildrenImpl::child_size(),
-			  ChildrenImpl::children().size()}
+			  ChildrenImpl::child_size(), ChildrenImpl::children().size()}
+	{
+		initialise();
+	}
+
+	using AccessImpl::get;
+	using AccessImpl::set;
+	using ChildrenImpl::child_size;
+	using ChildrenImpl::children;
+	using DataImpl::data;
+	using LeafsImpl::leafs;
+	using LeafsImpl::pos_child;
+	using LeafsImpl::pos_idx_child;
+	using PartitionedAsColMajorMatrixImpl::matrix;
+	using SizeImpl::inside;
+	using SizeImpl::offset;
+	using SizeImpl::size;
+
+private:
+	void initialise()
 	{
 		assert(
 			ChildrenImpl::child_size()(ChildrenImpl::child_size().size() - 1) ==
@@ -258,26 +326,6 @@ public:
 		}
 	}
 
-	ConvGridTD(const VecDi & size_, const Felt::VecDi<D - 1> & child_size_)
-		: ConvGridTD{size_, calc_child_size(child_size_, size_), {0, 0, 0}}
-	{
-	}
-
-	using AccessImpl::get;
-	using AccessImpl::set;
-	using ChildrenImpl::child_size;
-	using ChildrenImpl::children;
-	using DataImpl::data;
-	using LeafsImpl::leafs;
-	using LeafsImpl::pos_child;
-	using LeafsImpl::pos_idx_child;
-	using PartitionedAsColMajorMatrixImpl::matrix;
-	using SizeImpl::inside;
-	using SizeImpl::offset;
-	using SizeImpl::size;
-
-private:
-
 	VecDi calc_child_size(const Felt::VecDi<D - 1> & window_, const VecDi & size_)
 	{
 		VecDi child_size_;
@@ -286,12 +334,18 @@ private:
 	}
 
 	Felt::Vec2u calc_padded_matrix_size()
+		requires(!uses_usm_allocator<Traits>)
 	{
 		return {
 			viennacl::tools::align_to_multiple(
 				static_cast<Felt::PosIdx>(child_size().prod()), convfelt::data_padding),
 			viennacl::tools::align_to_multiple(
 				static_cast<Felt::PosIdx>(children().size().prod()), convfelt::data_padding)};
+	}
+	Felt::Vec2u calc_padded_matrix_size()
+		requires uses_usm_allocator<Traits>
+	{
+		return {child_size().prod(), children().size().prod()};
 	}
 };
 
@@ -338,22 +392,25 @@ using Filter = FilterTD<convfelt::Scalar, 3>;
 
 namespace Felt::Impl
 {
-template <typename T, Felt::Dim D>
-struct Traits<convfelt::ConvGridTD<T, D>>
+template <typename T, Felt::Dim D, template <typename> class A>
+struct Traits<convfelt::ConvGridTD<T, D, A>>
 {
 	/// Single index stored in each grid node.
 	using Leaf = T;
+	using Allocator = A<T>;
+	using DataArray = std::vector<Leaf, Allocator>;
 	/// Dimension of grid.
 	static constexpr Dim t_dims = D;
 
 	using Child = convfelt::FilterTD<T, D>;
-	using Children = Felt::Impl::ByRef<Child, D>;
+	using Children = Felt::Impl::ByRef<Child, D, A>;
 };
 
 template <typename T, Felt::Dim D>
 struct Traits<convfelt::FilterTD<T, D>>
 {
 	using Leaf = T;
+	using DataArray = std::span<Leaf>;
 	static constexpr Dim t_dims = D;
 };
 
@@ -363,11 +420,13 @@ struct Traits<convfelt::FilterTD<T, D>>
  * @tparam T type of data to store in the grid.
  * @tparam D number of dimensions of the grid.
  */
-template <typename T, Felt::Dim D>
-struct Traits<Felt::Impl::ByRef<T, D>>
+template <typename T, Felt::Dim D, template <typename> class A>
+struct Traits<Felt::Impl::ByRef<T, D, A>>
 {
 	/// Single index stored in each grid node.
 	using Leaf = T;
+	using Allocator = A<T>;
+	using DataArray = std::vector<Leaf, Allocator>;
 	/// Dimension of grid.
 	static constexpr Dim t_dims = D;
 };

@@ -8,11 +8,19 @@ template <typename... Args>
 using span = std::span<Args...>;
 }  // namespace sycl
 #include <oneapi/mkl.hpp>
+
 // Required for Eigen.
 #ifdef SYCL_DEVICE_ONLY
 #undef SYCL_DEVICE_ONLY
+#include <Eigen/Eigen>
+#define SYCL_DEVICE_ONLY
+#define was_SYCL_DEVICE_ONLY
 #endif
 #include <Eigen/Eigen>
+#ifdef was_SYCL_DEVICE_ONLY
+#define SYCL_DEVICE_ONLY
+#endif
+
 #include <catch2/catch.hpp>
 #include <cppcoro/static_thread_pool.hpp>
 #include <cppcoro/sync_wait.hpp>
@@ -24,14 +32,20 @@ using span = std::span<Args...>;
 #include <convfelt/ConvGrid.hpp>
 #include <convfelt/Numeric.hpp>
 #include <convfelt/iter.hpp>
+
 // Required for OpenImageIO
 #ifdef __CUDACC__
 #ifndef __CUDA_ARCH__
 #undef __CUDACC__
+#define was__CUDACC__
 #endif
 #endif
 #include <OpenImageIO/imagebufalgo.h>
 #include <OpenImageIO/imageio.h>
+#ifdef was__CUDACC__
+#define __CUDACC__
+#endif
+
 namespace viennacl
 {
 namespace result_of
@@ -531,7 +545,7 @@ SCENARIO("Basic SyCL usage")
 				sycl::buffer<float> buff_c(c.data(), c.size());
 
 				using Allocator = sycl::usm_allocator<float, sycl::usm::alloc::shared>;
-				std::vector<float,Allocator> vals(Allocator{q});
+				std::vector<float, Allocator> vals(Allocator{q});
 				vals.push_back(1);
 				vals.push_back(2);
 
@@ -582,6 +596,48 @@ SCENARIO("Basic oneMKL usage")
 				std::vector<float> expected = {0.f, 4.f, 0.f, 8.f, 0.f};
 
 				CHECK(b == expected);
+			}
+		}
+	}
+}
+
+template <typename T>
+using Allocator = sycl::usm_allocator<T, sycl::usm::alloc::shared>;
+
+SCENARIO("SyCL with ConvGrid")
+{
+	GIVEN("Shared grid")
+	{
+		sycl::gpu_selector selector;
+		sycl::context ctx;
+		sycl::device dev{selector};
+		auto * pgrid = sycl::malloc_shared<convfelt::ConvGridTD<float, 3, Allocator>>(1, dev, ctx);
+		new (pgrid) convfelt::ConvGridTD<float, 3, Allocator>{{4, 4, 3}, {2, 2}, ctx, dev};
+		std::fill(pgrid->data().begin(), pgrid->data().end(), 3);
+		CHECK(pgrid->children().data().size() > 1);
+		CHECK(pgrid->children().data()[0].data().size() > 1);
+		CHECK(&pgrid->children().data()[0].data()[0] == &pgrid->data()[0]);
+
+		WHEN("vectors are added using sycl")
+		{
+			sycl::range<1> work_items{pgrid->children().data().size()};
+
+			sycl::queue q{ctx, dev};
+			q.submit(
+				[&](sycl::handler & cgh)
+				{
+					cgh.parallel_for<class grid_mult>(
+						work_items,
+						[pgrid](sycl::id<1> tid)
+						{
+							for (auto & val : convfelt::iter::val(pgrid->children().get(tid)))
+								val *= 2;
+						});
+				});
+			q.wait_and_throw();
+			THEN("result is as expected")
+			{
+				for (auto const val : convfelt::iter::val(*pgrid)) CHECK(val == 6);
 			}
 		}
 	}

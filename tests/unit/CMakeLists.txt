@@ -45,4 +45,8 @@ target_compile_definitions(
 	CONVFELT_TEST_RESOURCE_DIR=\"${PROJECT_SOURCE_DIR}/tests/resources\"
 )
 
-catch_discover_tests(convfelt.test.unit)
+catch_discover_tests(convfelt.test.unit
+	PROPERTIES
+	ENVIRONMENT
+	LD_LIBRARY_PATH=${oneMKL_ROOT}/lib
+)
