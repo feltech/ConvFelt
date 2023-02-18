@@ -4,7 +4,6 @@
 add_executable(
 	convfelt.test.unit
 	main.cpp
-	test_ConvGrid.cpp
 	third_party.cpp
 )
 
@@ -24,8 +23,7 @@ target_link_system_libraries(
 	cppcoro::cppcoro
 	range-v3::range-v3
 	MKL::onemkl
-#	MKL::onemkl_blas_cublas
-#	SyclBLAS # Broken for hipSYCL
+	hipSYCL::hipSYCL-rt
 )
 
 

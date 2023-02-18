@@ -3,26 +3,15 @@
 
 # Compiler-specific support.
 if (NOT CMAKE_CXX_COMPILER_ID MATCHES Clang)
-	message(FATAL_ERROR "hipSYCL dependency requires clang compiler for all features ("
+	message(FATAL_ERROR "OpenSYCL dependency requires clang compiler for all features ("
 		"esp. coroutines) to be available")
 elseif (CMAKE_CXX_COMPILER_ID MATCHES Clang)
 	add_compile_options(
 		-Wno-error=unknown-cuda-version
-		-fcoroutines-ts
-		-stdlib=libc++
 	)
 	add_link_options(
 		-Wno-error=unknown-cuda-version
 		-Qunused-arguments
-		-fcoroutines-ts
-		-stdlib=libc++
-	)
-	add_compile_definitions(
-		# Trick libstdc++ into thinking -fcoroutines has been given (as opposed to -fcoroutines-ts)
-		# Note: then it fails for other reasons.
-		#		__cpp_impl_coroutine=201902L
-		# OpenEXR redefines half
-		_HALF_H_
 	)
 endif ()
 
@@ -139,36 +128,14 @@ set(ENABLE_SANITIZER_UNDEFINED_BEHAVIOR_DEFAULT OFF)
 # Generate project_options and project_warnings INTERFACE targets.
 dynamic_project_options()
 
-
 #------------------------------------------------------------
-# ViennaCL
+# cppcoro C++20 coroutines library
 
+# Use CPM rather than Conan, since the (current) Conan recipe forces `-fcoroutines-ts`, which is
+# removed in clang-17.
 CPMAddPackage(
-	NAME ViennaCL
-	GIT_TAG release-1.7.1
-	GIT_REPOSITORY https://github.com/viennacl/viennacl-dev
-	OPTIONS "BUILD_TESTING OFF" "BUILD_EXAMPLES OFF" "ENABLE_UBLAS OFF" "ENABLE_OPENCL ON"
+	"gh:andreasbuhr/cppcoro#main"
 )
-
-if (ViennaCL_ADDED)
-	# Disable clang-tidy for library target.
-	set_target_properties(viennacl PROPERTIES CXX_CLANG_TIDY "")
-	# Create include directory to gather relevant headers - to avoid pollution of adding whole
-	# source tree to include path.
-	file(MAKE_DIRECTORY ${ViennaCL_BINARY_DIR}/include)
-	# Symlink relevant header directories
-	file(CREATE_LINK
-		${ViennaCL_SOURCE_DIR}/viennacl
-		${ViennaCL_BINARY_DIR}/include/viennacl
-		COPY_ON_ERROR SYMBOLIC)
-	# Create library target
-	add_library(ViennaCL::viennacl INTERFACE IMPORTED)
-	# Add headers to library target.
-	target_include_directories(ViennaCL::viennacl INTERFACE ${ViennaCL_BINARY_DIR}/include)
-	# Link library target to source target.
-	target_link_libraries(ViennaCL::viennacl INTERFACE viennacl)
-endif ()
-
 
 #------------------------------------------------------------
 # Load dependencies via Conan package manager
@@ -185,9 +152,10 @@ conan_cmake_configure(
 
 	# OpenImageIO image loading/processing library
 	openimageio/2.3.7.2
-
-	# cppcoro coroutines library
-	andreasbuhr-cppcoro/cci.20210113
+	# Override to >=v3 so that Imath is used, rather than a fallback (OIIO_USING_IMATH), which works
+	# around "error: definition of type 'half' conflicts with typedef of the same name" when CUDA
+	# (via OpenSYCL) is also included.
+	openexr/3.1.5
 
 	# range-v3 (whilst waiting for std::range) library
 	range-v3/0.12.0
@@ -215,8 +183,6 @@ conan_cmake_configure(
 	openimageio:with_libwebp=False
 )
 
-conan_cmake_autodetect(conan_settings)
-
 if (NOT DEFINED CONVFELT_CONAN_PROFILE)
 	set(CONVFELT_CONAN_PROFILE default)
 endif ()
@@ -229,7 +195,8 @@ conan_cmake_install(
 	BUILD missing
 	REMOTE ${CONVFELT_CONAN_REMOTE}
 	PROFILE ${CONVFELT_CONAN_PROFILE}
-	#	SETTINGS ${conan_settings}
+	# Disable error for warning triggered by boost mpi build.
+	ENV CPPFLAGS=-Wno-error=enum-constexpr-conversion
 )
 
 find_package(Eigen3 REQUIRED)
@@ -237,6 +204,7 @@ find_package(Eigen3 REQUIRED)
 target_compile_definitions(Eigen3::Eigen INTERFACE EIGEN_HAS_STD_RESULT_OF=0)
 find_package(OpenImageIO REQUIRED)
 find_package(cppcoro REQUIRED)
+add_library(cppcoro::cppcoro ALIAS cppcoro)
 find_package(range-v3 REQUIRED)
 
 

@@ -19,7 +19,6 @@ target_include_directories(
 target_link_system_libraries(convfelt INTERFACE
 	range-v3::range-v3
 	Eigen3::Eigen
-	ViennaCL::viennacl
 	cppcoro::cppcoro
 	hipSYCL::hipSYCL-rt
 	felt)
@@ -27,8 +26,6 @@ target_link_system_libraries(convfelt INTERFACE
 target_compile_definitions(
 	convfelt
 	INTERFACE
-	VIENNACL_WITH_EIGEN
-	VIENNACL_WITH_OPENCL
 	CL_TARGET_OPENCL_VERSION=220
 )
 

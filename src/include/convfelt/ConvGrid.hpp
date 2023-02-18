@@ -2,7 +2,6 @@
 #include <concepts>
 #include <span>
 
-#include <viennacl/tools/tools.hpp>
 #include <sycl/sycl.hpp>
 
 #include <Felt/Impl/Common.hpp>
@@ -13,7 +12,6 @@
 
 #include "Numeric.hpp"
 #include "iter.hpp"
-
 
 /**
  * This header contains the grid structures used by ConvFelt.
@@ -61,14 +59,10 @@ private:
 	Felt::NodeIdx const m_num_children;
 
 protected:
-	using MatrixMap = Eigen::Map<
-		Eigen::Matrix<Leaf, Eigen::Dynamic, Eigen::Dynamic, Eigen::ColMajor>,
-		0,
-		Eigen::Stride<convfelt::data_padding, 1>>;
-	using MatrixConstMap = Eigen::Map<
-		Eigen::Matrix<Leaf, Eigen::Dynamic, Eigen::Dynamic, Eigen::ColMajor> const,
-		0,
-		Eigen::Stride<convfelt::data_padding, 1>>;
+	using MatrixMap =
+		Eigen::Map<Eigen::Matrix<Leaf, Eigen::Dynamic, Eigen::Dynamic, Eigen::ColMajor>, 0>;
+	using MatrixConstMap =
+		Eigen::Map<Eigen::Matrix<Leaf, Eigen::Dynamic, Eigen::Dynamic, Eigen::ColMajor> const, 0>;
 
 	PartitionedAsColMajorMatrix(VecDi const & child_size, VecDi const & num_children)
 		: m_child_size{child_size.prod()}, m_num_children{num_children.prod()}
@@ -90,7 +84,7 @@ protected:
 		return MatrixConstMap{pself->data().data(), m_child_size, m_num_children};
 	}
 };
-}
+}  // namespace Numeric
 
 namespace Grid
 {
@@ -112,7 +106,8 @@ protected:
 protected:
 	DataSpan(sycl::context ctx, sycl::device dev)
 		requires convfelt::uses_usm_allocator<Traits>
-	: m_data{sycl::usm_allocator<Leaf, sycl::usm::alloc::shared>{std::move(ctx), std::move(dev)}}
+		: m_data{
+			  sycl::usm_allocator<Leaf, sycl::usm::alloc::shared>{std::move(ctx), std::move(dev)}}
 	{
 	}
 
@@ -176,15 +171,14 @@ protected:
 //	}
 };
 
-}
-}
+}  // namespace Grid
+}  // namespace Mixin
 
 template <typename T, Dim D, template <typename> class A>
-class ByRef :
-	FELT_MIXINS(
-		(ByRef<T, D, A>),
-		(Grid::Access::ByRef)(Grid::Activate)(Grid::DataSpan)(Grid::Size),
-		(Grid::Index))
+class ByRef : FELT_MIXINS(
+				  (ByRef<T, D, A>),
+				  (Grid::Access::ByRef)(Grid::Activate)(Grid::DataSpan)(Grid::Size),
+				  (Grid::Index))
 //{
 private:
 	using This = ByRef<T, D, A>;
@@ -200,8 +194,7 @@ private:
 
 public:
 	ByRef(const VecDi & size_, const VecDi & offset_, Leaf background_)
-		: ActivateImpl{std::move(background_)},
-		  SizeImpl{size_, offset_}
+		: ActivateImpl{std::move(background_)}, SizeImpl{size_, offset_}
 	{
 		ActivateImpl::activate();
 	}
@@ -213,7 +206,7 @@ public:
 		sycl::context context,
 		sycl::device device)
 		requires convfelt::uses_usm_allocator<Traits>
-	: ActivateImpl{std::move(background_)}, DataImpl{context, device}, SizeImpl{size_, offset_}
+		: ActivateImpl{std::move(background_)}, DataImpl{context, device}, SizeImpl{size_, offset_}
 	{
 		ActivateImpl::activate();
 	}
@@ -221,12 +214,12 @@ public:
 	using AccessImpl::get;
 	using AccessImpl::index;
 	using ActivateImpl::activate;
-//	using DataImpl::assert_pos_idx_bounds;
+	using DataImpl::assert_pos_idx_bounds;
 	using DataImpl::data;
 	using SizeImpl::offset;
 	using SizeImpl::size;
 };
-}
+}  // namespace Felt::Impl
 
 namespace convfelt
 {
@@ -241,7 +234,7 @@ class ConvGridTD
 		  (Grid::Activate)(Grid::DataSpan)(Grid::Size)(Partitioned::Access)(Partitioned::Children)(
 			  Partitioned::Leafs)(Numeric::PartitionedAsColMajorMatrix),
 		  (Grid::Index))
-	  //{
+//{
 private:
 	using This = ConvGridTD<T, D, A>;
 	using Traits = Felt::Impl::Traits<This>;
@@ -275,10 +268,12 @@ public:
 		sycl::context context,
 		sycl::device device)
 		requires uses_usm_allocator<Traits>
-	: DataImpl{context, device},
-	  SizeImpl{size_, {0, 0, 0}},
-	  ChildrenImpl{size_, {0, 0, 0}, calc_child_size(child_size_, size_), Child{}, context, device},
-	  PartitionedAsColMajorMatrixImpl{ChildrenImpl::child_size(), ChildrenImpl::children().size()}
+		: DataImpl{context, device},
+		  SizeImpl{size_, {0, 0, 0}},
+		  ChildrenImpl{
+			  size_, {0, 0, 0}, calc_child_size(child_size_, size_), Child{}, context, device},
+		  PartitionedAsColMajorMatrixImpl{
+			  ChildrenImpl::child_size(), ChildrenImpl::children().size()}
 	{
 		initialise();
 	}
@@ -334,16 +329,6 @@ private:
 	}
 
 	Felt::Vec2u calc_padded_matrix_size()
-		requires(!uses_usm_allocator<Traits>)
-	{
-		return {
-			viennacl::tools::align_to_multiple(
-				static_cast<Felt::PosIdx>(child_size().prod()), convfelt::data_padding),
-			viennacl::tools::align_to_multiple(
-				static_cast<Felt::PosIdx>(children().size().prod()), convfelt::data_padding)};
-	}
-	Felt::Vec2u calc_padded_matrix_size()
-		requires uses_usm_allocator<Traits>
 	{
 		return {child_size().prod(), children().size().prod()};
 	}
@@ -430,4 +415,4 @@ struct Traits<Felt::Impl::ByRef<T, D, A>>
 	/// Dimension of grid.
 	static constexpr Dim t_dims = D;
 };
-}
+}  // namespace Felt::Impl

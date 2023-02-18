@@ -3,6 +3,8 @@
 #include <cstddef>
 
 #include <Felt/Impl/Common.hpp>
+#include <Felt/Impl/Util.hpp>
+
 #include <cppcoro/generator.hpp>
 #include <range/v3/view/enumerate.hpp>
 #include <range/v3/view/indices.hpp>
