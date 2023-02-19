@@ -423,6 +423,9 @@ SCENARIO("SyCL with ConvGrid")
 			q.submit(
 				[&](sycl::handler & cgh)
 				{
+					sycl::stream os{2048, 256, cgh};
+					[[maybe_unused]] auto const scoped_stream = pgrid->scoped_stream(&os);
+
 					cgh.parallel_for<class grid_mult>(
 						work_items,
 						[pgrid = pgrid.get()](sycl::id<1> tid)

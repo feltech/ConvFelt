@@ -133,53 +133,90 @@ protected:
 	{
 		ar(m_data);
 	}
-
-//	/**
-//	 * Check if given position's index is within the data array and raise a domain_error if not.
-//	 *
-//	 * @param pos_idx_ position in grid to query.
-//	 * @param title_ message to include in generated exception.
-//	 */
-//	void assert_pos_idx_bounds(const PosIdx pos_idx_, std::string_view title_) const
-//	{
-//		assert_pos_idx_bounds(pself->index(pos_idx_), title_);
-//	}
-//
-//	/**
-//	 * Check if given position's index is within the data array and raise a domain_error if not.
-//	 *
-//	 * @param pos_ position in grid to query.
-//	 * @param title_ message to include in generated exception.
-//	 */
-//	void assert_pos_idx_bounds(const VecDi & pos_, std::string_view title_) const
-//	{
-//		const PosIdx pos_idx = pself->index(pos_);
-//
-//		if (pos_idx > pself->data().size())
-//		{
-//			const VecDi & pos_min = pself->offset();
-//			const VecDi & pos_max = (pself->size() + pos_min - VecDi::Constant(1));
-//			std::stringstream err;
-//			err << title_ << format(pos_.transpose()) << " data index " << pos_idx
-//				<< " is greater than data size " << pself->data().size() << " for grid "
-//				<< format(pos_min) << "-" << format(pos_max) << std::endl;
-//			std::string err_str = err.str();
-//			throw std::domain_error(err_str);
-//		}
-//
-//		pself->assert_pos_bounds(pos_, title_);
-//	}
 };
 
-}  // namespace Grid
+template <class TDerived>
+class AssertBounds
+{
+	using Traits = Impl::Traits<TDerived>;
+	/// Type of data to store in grid nodes.
+	using Leaf = typename Traits::Leaf;
+	static constexpr Dim t_dims = Traits::t_dims;
+	using VecDi = Felt::VecDi<t_dims>;
+
+protected:
+#ifdef SYCL_DEVICE_ONLY
+	using Stream = sycl::stream*;
+#else
+	using Stream = std::ostream*;
+#endif
+
+	Stream get_stream() const
+	{
+		return m_stream;
+	}
+
+	void set_stream(Stream stream)
+	{
+		m_stream = stream;
+	}
+
+	void assert_pos_bounds(const Felt::PosIdx pos_idx_, const char * title_) const
+	{
+		assert_pos_idx_bounds(pos_idx_, title_);
+	}
+
+	void assert_pos_idx_bounds(const VecDi & pos_, const char * title_) const
+	{
+		assert_pos_bounds(pos_, title_);
+	}
+
+	void assert_pos_bounds(const VecDi & pos_, const char * title_) const
+	{
+		if (m_stream && !pself->inside(pos_))
+		{
+			*m_stream << "AssertionError: " << title_ << " assert_pos_bounds(" << pos_(0);
+			for (Felt::TupleIdx axis = 1; axis < pos_.size(); ++axis)
+				*m_stream << ", " << pos_(axis);
+			*m_stream << ")\n";
+#ifndef SYCL_DEVICE_ONLY
+			throw std::out_of_range{"Position out of bounds"};
+#endif
+		}
+	}
+
+	void assert_pos_idx_bounds(const PosIdx pos_idx_, const char * title_) const
+	{
+		if (m_stream && pos_idx_ >= pself->data().size())
+		{
+			auto pos = pself->index(pos_idx_);
+			*m_stream << "AssertionError: " << title_ << " assert_pos_idx_bounds(" << pos_idx_
+					  << ") i.e. (" << pos(0);
+			for (Felt::TupleIdx axis = 1; axis < pos.size(); ++axis) *m_stream << ", " << pos(axis);
+			*m_stream << ")\n";
+#ifndef SYCL_DEVICE_ONLY
+			throw std::out_of_range{"Index out of bounds"};
+#endif
+		}
+	}
+
+private:
+#ifdef SYCL_DEVICE_ONLY
+	Stream m_stream{nullptr};
+#else
+	Stream  m_stream{&std::cerr};
+#endif
+};
+}	// namespace Grid
 }  // namespace Mixin
 
 template <typename T, Dim D, template <typename> class A>
-class ByRef : FELT_MIXINS(
-				  (ByRef<T, D, A>),
-				  (Grid::Access::ByRef)(Grid::Activate)(Grid::DataSpan)(Grid::Size),
-				  (Grid::Index))
-//{
+class ByRef
+	: FELT_MIXINS(
+		  (ByRef<T, D, A>),
+		  (Grid::Access::ByRef)(Grid::Activate)(Grid::DataSpan)(Grid::Size)(Grid::AssertBounds),
+		  (Grid::Index))
+	  //{
 private:
 	using This = ByRef<T, D, A>;
 	using Traits = Impl::Traits<This>;
@@ -188,6 +225,8 @@ private:
 	using ActivateImpl = Impl::Mixin::Grid::Activate<This>;
 	using DataImpl = Impl::Mixin::Grid::DataSpan<This>;
 	using SizeImpl = Impl::Mixin::Grid::Size<This>;
+	using AssertBoundsImpl = Felt::Impl::Mixin::Grid::AssertBounds<This>;
+	using IndexImpl = Felt::Impl::Mixin::Grid::Index<This>;
 
 	using VecDi = Felt::VecDi<Traits::t_dims>;
 	using Leaf = typename Traits::Leaf;
@@ -214,7 +253,9 @@ public:
 	using AccessImpl::get;
 	using AccessImpl::index;
 	using ActivateImpl::activate;
-	using DataImpl::assert_pos_idx_bounds;
+	using AssertBoundsImpl::set_stream;
+	using AssertBoundsImpl::assert_pos_bounds;
+	using AssertBoundsImpl::assert_pos_idx_bounds;
 	using DataImpl::data;
 	using SizeImpl::offset;
 	using SizeImpl::size;
@@ -232,7 +273,7 @@ class ConvGridTD
 	: FELT_MIXINS(
 		  (ConvGridTD<T, D, A>),
 		  (Grid::Activate)(Grid::DataSpan)(Grid::Size)(Partitioned::Access)(Partitioned::Children)(
-			  Partitioned::Leafs)(Numeric::PartitionedAsColMajorMatrix),
+			  Partitioned::Leafs)(Numeric::PartitionedAsColMajorMatrix)(Grid::AssertBounds),
 		  (Grid::Index))
 //{
 private:
@@ -246,11 +287,49 @@ private:
 	using PartitionedAsColMajorMatrixImpl =
 		Felt::Impl::Mixin::Numeric::PartitionedAsColMajorMatrix<This>;
 	using SizeImpl = Felt::Impl::Mixin::Grid::Size<This>;
+	using IndexImpl = Felt::Impl::Mixin::Grid::Index<This>;
+	using AssertBoundsImpl = Felt::Impl::Mixin::Grid::AssertBounds<This>;
 
 public:
 	using ChildrenGrid = typename ChildrenImpl::ChildrenGrid;
 	using Child = typename Traits::Child;
 	using VecDi = Felt::VecDi<D>;
+
+	struct scoped_stream_t
+	{
+#ifdef SYCL_DEVICE_ONLY
+		scoped_stream_t(
+			This & parent, AssertBoundsImpl::Stream stream)
+			: m_parent{parent}, m_prev_stream{m_parent.get_stream()}
+		{
+			m_parent.set_stream(stream);
+			m_parent.children().set_stream(stream);
+			for (auto& child : convfelt::iter::val(m_parent.children()))
+				child.set_stream(stream);
+		}
+
+		~scoped_stream_t()
+		{
+			m_parent.set_stream(m_prev_stream);
+			m_parent.children().set_stream(m_prev_stream);
+			for (auto& child : convfelt::iter::val(m_parent.children()))
+				child.set_stream(m_prev_stream);
+		}
+
+	private:
+		This & m_parent;
+		AssertBoundsImpl::Stream m_prev_stream;
+#endif
+	};
+
+	scoped_stream_t scoped_stream([[maybe_unused]] sycl::stream * stream)
+	{
+#ifdef SYCL_DEVICE_ONLY
+		return {*this, stream};
+#else
+		return {};
+#endif
+	};
 
 	ConvGridTD(const VecDi & size_, const Felt::VecDi<D - 1> & child_size_)
 		: ConvGridTD{size_, calc_child_size(child_size_, size_), {0, 0, 0}}
@@ -289,6 +368,8 @@ public:
 
 	using AccessImpl::get;
 	using AccessImpl::set;
+	using AssertBoundsImpl::assert_pos_bounds;
+	using AssertBoundsImpl::assert_pos_idx_bounds;
 	using ChildrenImpl::child_size;
 	using ChildrenImpl::children;
 	using DataImpl::data;
@@ -337,11 +418,11 @@ private:
 using ConvGrid = ConvGridTD<convfelt::Scalar, 3>;
 
 template <typename T, Felt::Dim D>
-class FilterTD
-	: FELT_MIXINS(
-		  (FilterTD<T, D>),
-		  (Grid::Access::ByValue)(Grid::Activate)(Grid::DataSpan)(Grid::Resize)(Numeric::Snapshot),
-		  (Grid::Index))
+class FilterTD : FELT_MIXINS(
+					 (FilterTD<T, D>),
+					 (Grid::Access::ByValue)(Grid::Activate)(Grid::DataSpan)(Grid::Resize)(
+						 Numeric::Snapshot)(Grid::AssertBounds),
+					 (Grid::Index))
 //{
 private:
 	using This = FilterTD<T, D>;
@@ -353,6 +434,8 @@ private:
 	using DataSpanImpl = Felt::Impl::Mixin::Grid::DataSpan<This>;
 	using SizeImpl = Felt::Impl::Mixin::Grid::Resize<This>;
 	using SnapshotImpl = Felt::Impl::Mixin::Numeric::Snapshot<This>;
+	using IndexImpl = Felt::Impl::Mixin::Grid::Index<This>;
+	using AssertBoundsImpl = Felt::Impl::Mixin::Grid::AssertBounds<This>;
 
 public:
 	using typename DataSpanImpl::DataArray;
@@ -362,6 +445,9 @@ public:
 	using AccessImpl::get;
 	using AccessImpl::index;
 	using AccessImpl::set;
+	using AssertBoundsImpl::set_stream;
+	using AssertBoundsImpl::assert_pos_bounds;
+	using AssertBoundsImpl::assert_pos_idx_bounds;
 	using DataSpanImpl::data;
 	using SizeImpl::inside;
 	using SizeImpl::offset;
