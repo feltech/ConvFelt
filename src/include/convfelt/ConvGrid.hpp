@@ -1,7 +1,6 @@
 #pragma once
 #include <concepts>
 #include <span>
-#include <cassert>
 
 #include <sycl/sycl.hpp>
 
@@ -13,36 +12,7 @@
 
 #include "Numeric.hpp"
 #include "iter.hpp"
-
-#ifdef __CUDA_ARCH__
-extern "C"
-{
-// This doesn't expand for device functions, yet is used by `assert`, so set a default.
-#define __PRETTY_FUNCTION__ "<unknown>"
-
-	// Add missing __host__ version. Unused, only required for compilation.
-	// See __clang_cuda_runtime_wrapper.h
-	[[maybe_unused]] __host__ void __assertfail(
-		[[maybe_unused]] const char * __message,
-		[[maybe_unused]] const char * __file,
-		[[maybe_unused]] unsigned __line,
-		[[maybe_unused]] const char * __function,
-		[[maybe_unused]] size_t __charSize)
-	{
-	}
-
-#pragma clang diagnostic push
-#pragma clang diagnostic ignored "-Winvalid-noreturn"
-	// Fix "unresolved extern function".
-	[[maybe_unused]] void __assert_fail(
-		const char * __message, const char * __file, unsigned __line, const char * __function)
-	{
-		// See __clang_cuda_runtime_wrapper.h
-		__assertfail(__message, __file, __line, __function, sizeof(char));
-	}
-#pragma clang diagnostic pop
-}
-#endif
+#include "assert_compat.hpp"
 
 /**
  * This header contains the grid structures used by ConvFelt.
