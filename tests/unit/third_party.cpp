@@ -428,3 +428,163 @@ SCENARIO("SyCL with ConvGrid")
 		}
 	}
 }
+
+SCENARIO("Applying filter to ConvGrid")
+{
+	GIVEN("a simple monochrome image file loaded with 1 pixel of zero padding")
+	{
+		static constexpr std::string_view file_path = CONVFELT_TEST_RESOURCE_DIR "/plus.png";
+		OIIO::ImageBuf image{std::string{file_path}};
+		image.read();
+		auto image_grid_spec = image.spec();
+		image_grid_spec.width += 2;
+		image_grid_spec.height += 2;
+		image_grid_spec.format = OIIO::TypeDescFromC<convfelt::Scalar>::value();
+
+		convfelt::InputGrid image_grid{
+			{image.spec().height + 2, image.spec().width + 2, image_grid_spec.nchannels},
+			{0, 0, 0},
+			0};
+
+		OIIO::ImageBuf image_grid_buf{image_grid_spec, image_grid.data().data()};
+		OIIO::ImageBufAlgo::paste(image_grid_buf, 1, 1, 0, 0, image);
+
+		AND_GIVEN("image is split into filter regions")
+		{
+			sycl::gpu_selector selector;
+			sycl::context ctx;
+			sycl::device dev{selector};
+			using FilterGrid =
+				convfelt::ConvGridTD<convfelt::Scalar, 3, convfelt::UsmSharedAllocator>;
+
+			const Felt::NodeIdx filter_stride = 2;
+
+			auto filter_input_grid = [&]
+			{
+				Felt::Vec2i const filter_input_window{4, 4};
+				Felt::Vec3i const filter_input_shape{4, 4, 3};
+
+				Felt::Vec3i num_filters = (image_grid.size() - filter_input_shape);
+				num_filters = num_filters / filter_stride + Felt::Vec3i::Ones();
+				Felt::Vec3i const num_connections =
+					(num_filters.array() * filter_input_shape.array()).matrix();
+
+				return convfelt::make_unique_sycl<FilterGrid>(
+					dev, ctx, num_connections, filter_input_window, ctx, dev);
+			}();
+			const Felt::Vec3i filter_input_shape = filter_input_grid->child_size();
+
+			for (auto const & [filter_pos_idx, filter] :
+				 convfelt::iter::idx_and_val(filter_input_grid->children()))
+			{
+				const Felt::Vec3i input_pos_start =
+					filter_input_grid->children().index(filter_pos_idx) * filter_stride;
+				(void)input_pos_start;
+
+				for (Felt::PosIdx local_pos_idx : convfelt::iter::pos_idx(filter))
+				{
+					const Felt::Vec3i input_pos =
+						input_pos_start + Felt::index<3>(local_pos_idx, filter.size());
+
+					filter.set(local_pos_idx, image_grid.get(input_pos));
+				}
+			}
+
+			AND_GIVEN("an output grid and weight matrix")
+			{
+				Felt::Vec2i const filter_output_window{2, 2};
+				Felt::Vec3i const filter_output_shape{2, 2, 4};
+				Felt::Vec3i const filter_output_grid_size =
+					(filter_input_grid->children().size().array() * filter_output_shape.array())
+						.matrix();
+
+				auto filter_output_grid = convfelt::make_unique_sycl<FilterGrid>(
+					dev, ctx, filter_output_grid_size, filter_output_window, ctx, dev);
+
+				REQUIRE(
+					filter_output_grid->children().size() == filter_input_grid->children().size());
+
+				using WeightsMatrix =
+					Eigen::Matrix<convfelt::Scalar, Eigen::Dynamic, Eigen::Dynamic>;
+				WeightsMatrix weights{filter_output_shape.prod(), filter_input_shape.prod()};
+				weights.setConstant(1);
+
+				WHEN("filter is applied to grid")
+				{
+					sycl::range<1> work_items{filter_input_grid->children().data().size()};
+
+					sycl::buffer<convfelt::Scalar> weights_buff{
+						weights.data(), static_cast<std::size_t>(weights.size())};
+
+					sycl::queue q{ctx, dev};
+					q.submit(
+						[&](sycl::handler & cgh)
+						{
+							cgh.prefetch(
+								filter_input_grid->children().data().data(),
+								filter_input_grid->children().data().size());
+							cgh.prefetch(
+								filter_output_grid->children().data().data(),
+								filter_output_grid->children().data().size());
+							auto access_a = weights_buff.get_access<sycl::access::mode::read>(cgh);
+
+							sycl::stream os{2048, 256, cgh};
+							[[maybe_unused]] auto const scoped_input_stream =
+								filter_input_grid->scoped_stream(&os);
+							[[maybe_unused]] auto const scoped_output_stream =
+								filter_output_grid->scoped_stream(&os);
+
+							cgh.parallel_for<class grid_mult>(
+								work_items,
+								[filter_input_grid = filter_input_grid.get(),
+								 filter_output_grid = filter_output_grid.get(),
+								 weights,
+								 access_a]([[maybe_unused]] sycl::id<1> tid)
+								{
+									Eigen::Map<WeightsMatrix, 0> weights_local{
+										access_a.get_pointer(), weights.rows(), weights.cols()};
+
+									auto const & input_child =
+										filter_input_grid->children().get(tid);
+									auto & output_child = filter_output_grid->children().get(tid);
+
+									using MatrixColMap = Eigen::
+										Map<Eigen::Matrix<convfelt::Scalar, Eigen::Dynamic, 1>, 0>;
+									[[maybe_unused]] const MatrixColMap input_vec{
+										input_child.data().data(),
+										Eigen::Index(input_child.data().size()),
+										1};
+									[[maybe_unused]] MatrixColMap output_vec{
+										output_child.data().data(),
+										Eigen::Index(output_child.data().size()),
+										1};
+
+									output_vec = weights_local * input_vec;
+								});
+						});
+					q.wait_and_throw();
+
+					THEN("values are as expected")
+					{
+						for (auto const & filter_pos_idx :
+							 convfelt::iter::pos_idx(filter_output_grid->children()))
+						{
+							convfelt::Scalar const expected =
+								filter_input_grid->children().get(filter_pos_idx).matrix().sum();
+
+							const Felt::Vec3i filter_pos =
+								filter_input_grid->children().index(filter_pos_idx);
+							CAPTURE(filter_pos);
+
+							for (auto const & actual : convfelt::iter::val(
+									 filter_output_grid->children().get(filter_pos_idx)))
+							{
+								REQUIRE(actual == expected);
+							}
+						}
+					}
+				}
+			}
+		}
+	}
+}
