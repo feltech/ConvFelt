@@ -46,11 +46,10 @@ using span = std::span<Args...>;
 #include <cppcoro/sync_wait.hpp>
 #include <cppcoro/task.hpp>
 
-
+#include <convfelt/ConvGrid.hpp>
 #include <convfelt/Numeric.hpp>
 #include <convfelt/iter.hpp>
-#include <convfelt/ConvGrid.hpp>
-
+#include <convfelt/memory.hpp>
 
 SCENARIO("Using OpenImageIO with cppcoro and loading into Felt grid")
 {
@@ -384,20 +383,6 @@ SCENARIO("Basic oneMKL usage")
 	}
 }
 
-template <typename T>
-using Allocator = sycl::usm_allocator<T, sycl::usm::alloc::shared>;
-
-template <typename T>
-auto make_unique_sycl(sycl::device const & dev, sycl::context const & ctx, auto &&... args)
-{
-	auto * mem_region = sycl::malloc_shared<T>(1, dev, ctx);
-	auto const deleter = [ctx](T * ptr) { sycl::free(ptr, ctx); };
-	auto ptr = std::unique_ptr<T, decltype(deleter)>{mem_region, deleter};
-
-	new (mem_region) T{std::forward<decltype(args)>(args)...};
-	return ptr;
-}
-
 SCENARIO("SyCL with ConvGrid")
 {
 	GIVEN("Shared grid")
@@ -405,10 +390,10 @@ SCENARIO("SyCL with ConvGrid")
 		sycl::gpu_selector selector;
 		sycl::context ctx;
 		sycl::device dev{selector};
-		using ConvGrid = convfelt::ConvGridTD<float, 3, Allocator>;
+		using ConvGrid = convfelt::ConvGridTD<float, 3, convfelt::UsmSharedAllocator>;
 
-		auto const pgrid =
-			make_unique_sycl<ConvGrid>(dev, ctx, Felt::Vec3i{4, 4, 3}, Felt::Vec2i{2, 2}, ctx, dev);
+		auto const pgrid = convfelt::make_unique_sycl<ConvGrid>(
+			dev, ctx, Felt::Vec3i{4, 4, 3}, Felt::Vec2i{2, 2}, ctx, dev);
 
 		std::fill(pgrid->data().begin(), pgrid->data().end(), 3);
 		CHECK(pgrid->children().data().size() > 1);
@@ -423,6 +408,7 @@ SCENARIO("SyCL with ConvGrid")
 			q.submit(
 				[&](sycl::handler & cgh)
 				{
+					cgh.prefetch(pgrid->children().data().data(), pgrid->children().data().size());
 					sycl::stream os{2048, 256, cgh};
 					[[maybe_unused]] auto const scoped_stream = pgrid->scoped_stream(&os);
 
