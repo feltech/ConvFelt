@@ -517,7 +517,27 @@ SCENARIO("Applying filter to ConvGrid")
 					weights_data, filter_output_shape.prod(), filter_input_shape.prod()};
 				weights.setConstant(1);
 
-				WHEN("filter is applied to grid")
+				auto const assert_expected_values = [&]
+				{
+					for (auto const & filter_pos_idx :
+						 convfelt::iter::pos_idx(filter_output_grid->children()))
+					{
+						convfelt::Scalar const expected =
+							filter_input_grid->children().get(filter_pos_idx).matrix().sum();
+
+						const Felt::Vec3i filter_pos =
+							filter_input_grid->children().index(filter_pos_idx);
+						CAPTURE(filter_pos);
+
+						for (auto const & actual : convfelt::iter::val(
+								 filter_output_grid->children().get(filter_pos_idx)))
+						{
+							REQUIRE(actual == expected);
+						}
+					}
+				};
+
+				WHEN("filter is applied to grid using Eigen in a hand-rolled kernel")
 				{
 					sycl::range<1> work_items{filter_input_grid->children().data().size()};
 					sycl::queue q{ctx, dev};
@@ -564,22 +584,42 @@ SCENARIO("Applying filter to ConvGrid")
 
 					THEN("values are as expected")
 					{
-						for (auto const & filter_pos_idx :
-							 convfelt::iter::pos_idx(filter_output_grid->children()))
-						{
-							convfelt::Scalar const expected =
-								filter_input_grid->children().get(filter_pos_idx).matrix().sum();
+						assert_expected_values();
+					}
+				}
 
-							const Felt::Vec3i filter_pos =
-								filter_input_grid->children().index(filter_pos_idx);
-							CAPTURE(filter_pos);
+				WHEN("filter is applied to grid using oneMKL")
+				{
+					sycl::queue q{ctx, dev};
 
-							for (auto const & actual : convfelt::iter::val(
-									 filter_output_grid->children().get(filter_pos_idx)))
-							{
-								REQUIRE(actual == expected);
-							}
-						}
+					oneapi::mkl::blas::column_major::gemm(
+						q,
+						oneapi::mkl::transpose::nontrans,
+						oneapi::mkl::transpose::nontrans,
+						// m: Rows of output / rows of weights
+						filter_output_grid->child_size().prod(),
+						// n: Columns of output / columns of input
+						static_cast<int64_t>(filter_output_grid->children().data().size()),
+						// k: Rows of input / columns of weights
+						filter_input_grid->child_size().prod(),
+						// alpha
+						1,
+						// a: weights
+						weights_data,
+						weights.rows(),
+						// b: input
+						filter_input_grid->data().data(),
+						filter_input_grid->child_size().prod(),
+						// beta
+						0,
+						// c: output
+						filter_output_grid->data().data(),
+						filter_output_grid->child_size().prod());
+
+					q.wait_and_throw();
+					THEN("values are as expected")
+					{
+						assert_expected_values();
 					}
 				}
 			}
