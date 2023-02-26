@@ -504,29 +504,33 @@ SCENARIO("Applying filter to ConvGrid")
 				REQUIRE(
 					filter_output_grid->children().size() == filter_input_grid->children().size());
 
-				using WeightsMatrix =
-					Eigen::Matrix<convfelt::Scalar, Eigen::Dynamic, Eigen::Dynamic>;
-				WeightsMatrix weights{filter_output_shape.prod(), filter_input_shape.prod()};
+				using MatrixMap =
+					Eigen::Map<Eigen::Matrix<convfelt::Scalar, Eigen::Dynamic, Eigen::Dynamic>, 0>;
+				using ColVectorMap =
+					Eigen::Map<Eigen::Matrix<convfelt::Scalar, Eigen::Dynamic, 1>, 0>;
+
+				std::size_t weights_size = static_cast<std::size_t>(filter_output_shape.prod()) *
+					static_cast<std::size_t>(filter_input_shape.prod());
+				auto weights_data = sycl::malloc_shared<convfelt::Scalar>(weights_size, dev, ctx);
+
+				MatrixMap weights{
+					weights_data, filter_output_shape.prod(), filter_input_shape.prod()};
 				weights.setConstant(1);
 
 				WHEN("filter is applied to grid")
 				{
 					sycl::range<1> work_items{filter_input_grid->children().data().size()};
-
-					sycl::buffer<convfelt::Scalar> weights_buff{
-						weights.data(), static_cast<std::size_t>(weights.size())};
-
 					sycl::queue q{ctx, dev};
 					q.submit(
 						[&](sycl::handler & cgh)
 						{
+							cgh.prefetch(weights_data, weights_size);
 							cgh.prefetch(
 								filter_input_grid->children().data().data(),
 								filter_input_grid->children().data().size());
 							cgh.prefetch(
 								filter_output_grid->children().data().data(),
 								filter_output_grid->children().data().size());
-							auto access_a = weights_buff.get_access<sycl::access::mode::read>(cgh);
 
 							sycl::stream os{2048, 256, cgh};
 							[[maybe_unused]] auto const scoped_input_stream =
@@ -538,28 +542,22 @@ SCENARIO("Applying filter to ConvGrid")
 								work_items,
 								[filter_input_grid = filter_input_grid.get(),
 								 filter_output_grid = filter_output_grid.get(),
-								 weights,
-								 access_a]([[maybe_unused]] sycl::id<1> tid)
+								 weights](sycl::id<1> tid)
 								{
-									Eigen::Map<WeightsMatrix, 0> weights_local{
-										access_a.get_pointer(), weights.rows(), weights.cols()};
-
 									auto const & input_child =
 										filter_input_grid->children().get(tid);
 									auto & output_child = filter_output_grid->children().get(tid);
 
-									using MatrixColMap = Eigen::
-										Map<Eigen::Matrix<convfelt::Scalar, Eigen::Dynamic, 1>, 0>;
-									[[maybe_unused]] const MatrixColMap input_vec{
+									ColVectorMap const input_vec{
 										input_child.data().data(),
 										Eigen::Index(input_child.data().size()),
 										1};
-									[[maybe_unused]] MatrixColMap output_vec{
+									ColVectorMap output_vec{
 										output_child.data().data(),
 										Eigen::Index(output_child.data().size()),
 										1};
 
-									output_vec = weights_local * input_vec;
+									output_vec = weights * input_vec;
 								});
 						});
 					q.wait_and_throw();
