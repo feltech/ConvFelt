@@ -515,25 +515,25 @@ SCENARIO("Applying filter to ConvGrid")
 
 				MatrixMap weights{
 					weights_data, filter_output_shape.prod(), filter_input_shape.prod()};
-				weights.setConstant(1);
+				weights.setRandom();
+				//				Eigen::Matrix<convfelt::Scalar, Eigen::Dynamic, 1> wrong{
+				//					filter_output_grid->child_size().prod(), 1};
+				//				wrong.setConstant(1);
 
 				auto const assert_expected_values = [&]
 				{
 					for (auto const & filter_pos_idx :
 						 convfelt::iter::pos_idx(filter_output_grid->children()))
 					{
-						convfelt::Scalar const expected =
-							filter_input_grid->children().get(filter_pos_idx).matrix().sum();
-
 						const Felt::Vec3i filter_pos =
 							filter_input_grid->children().index(filter_pos_idx);
 						CAPTURE(filter_pos);
 
-						for (auto const & actual : convfelt::iter::val(
-								 filter_output_grid->children().get(filter_pos_idx)))
-						{
-							REQUIRE(actual == expected);
-						}
+						auto const input_matrix =
+							filter_input_grid->children().get(filter_pos_idx).matrix();
+						auto const output_matrix =
+							filter_output_grid->children().get(filter_pos_idx).matrix();
+						CHECK(weights * input_matrix == output_matrix);
 					}
 				};
 
