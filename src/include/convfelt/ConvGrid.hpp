@@ -152,7 +152,7 @@ protected:
 	using Stream = std::ostream*;
 #endif
 
-	Stream get_stream() const
+	[[nodiscard]] Stream get_stream() const
 	{
 		return m_stream;
 	}
