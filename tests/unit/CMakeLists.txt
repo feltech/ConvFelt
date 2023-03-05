@@ -43,8 +43,12 @@ target_compile_definitions(
 	CONVFELT_TEST_RESOURCE_DIR=\"${PROJECT_SOURCE_DIR}/tests/resources\"
 )
 
-catch_discover_tests(convfelt.test.unit
-	PROPERTIES
-	ENVIRONMENT
-	LD_LIBRARY_PATH=${oneMKL_ROOT}/lib
+target_link_options(
+	convfelt.test.unit
+	PRIVATE
+	# oneMKL does not have RUNPATH set to locate sibling libraries, so use RPATH behaviour so that
+	# our link search path is transient. In the build tree, CMake will set the RPATH of our binary
+	# to include the link_directories of the oneML library (see ThirdParty.cmake). This is useful
+	# for unit tests, since they run in the build tree.
+	-Wl,--disable-new-dtags
 )
