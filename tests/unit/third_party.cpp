@@ -598,24 +598,24 @@ SCENARIO("Applying filter to ConvGrid")
 						oneapi::mkl::transpose::nontrans,
 						oneapi::mkl::transpose::nontrans,
 						// m: Rows of output / rows of weights
-						filter_output_grid->child_size().prod(),
+						filter_output_grid->matrix().rows(),
 						// n: Columns of output / columns of input
-						static_cast<int64_t>(filter_output_grid->children().data().size()),
+						filter_output_grid->matrix().cols(),
 						// k: Rows of input / columns of weights
-						filter_input_grid->child_size().prod(),
+						filter_input_grid->matrix().rows(),
 						// alpha
 						1,
 						// a: weights
 						weights_data,
 						weights.rows(),
 						// b: input
-						filter_input_grid->data().data(),
-						filter_input_grid->child_size().prod(),
+						filter_input_grid->matrix().data(),
+						filter_input_grid->matrix().rows(),
 						// beta
 						0,
 						// c: output
-						filter_output_grid->data().data(),
-						filter_output_grid->child_size().prod());
+						filter_output_grid->matrix().data(),
+						filter_output_grid->matrix().rows());
 
 					q.wait_and_throw();
 					THEN("values are as expected")
