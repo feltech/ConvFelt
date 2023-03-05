@@ -547,7 +547,11 @@ SCENARIO("Applying filter to ConvGrid")
 				WHEN("filter is applied to grid using Eigen in a hand-rolled kernel")
 				{
 					sycl::range<1> work_items{filter_input_grid->children().data().size()};
+					sycl::nd_range<1> work_range{
+						filter_output_grid->data().size(),
+						static_cast<size_t>(filter_output_grid->child_size().prod())};
 					sycl::queue q{ctx, dev};
+
 					q.submit(
 						[&](sycl::handler & cgh)
 						{
@@ -557,18 +561,44 @@ SCENARIO("Applying filter to ConvGrid")
 							[[maybe_unused]] auto const scoped_output_stream =
 								filter_output_grid->scoped_stream(&os);
 
+							assert(weights.rows() == filter_output_grid->child_size().prod());
+							assert(weights.cols() == filter_input_grid->child_size().prod());
+
+							sycl::accessor<
+								convfelt::Scalar,
+								1,
+								sycl::access::mode::read_write,
+								sycl::access::target::local>
+								input_child_data(
+									sycl::range<1>(static_cast<size_t>(weights.cols())), cgh);
+
 							cgh.parallel_for<class grid_mult>(
-								work_items,
+								work_range,
 								[filter_input_grid = filter_input_grid.get(),
 								 filter_output_grid = filter_output_grid.get(),
-								 weights](sycl::id<1> tid)
+								 weights,
+								 input_child_data](sycl::nd_item<1> item)
 								{
-									auto const & input_child =
-										filter_input_grid->children().get(tid);
-									auto & output_child = filter_output_grid->children().get(tid);
+									std::size_t const group_id = item.get_group_linear_id();
+									std::size_t const local_id = item.get_local_linear_id();
+
+									auto & input_child =
+										filter_input_grid->children().get(group_id);
+									auto & output_child =
+										filter_output_grid->children().get(group_id);
+
+									assert(input_child.data().size() == input_child_data.size());
+									assert(local_id < output_child.data().size());
+
+									item.async_work_group_copy(
+											input_child_data.get_pointer(),
+											sycl::global_ptr<convfelt::Scalar>{
+												input_child.data().data()},
+											input_child.data().size())
+										.wait();
 
 									ColVectorMap const input_vec{
-										input_child.data().data(),
+										input_child_data.get_pointer().get(),
 										Eigen::Index(input_child.data().size()),
 										1};
 									ColVectorMap output_vec{
@@ -576,7 +606,8 @@ SCENARIO("Applying filter to ConvGrid")
 										Eigen::Index(output_child.data().size()),
 										1};
 
-									output_vec = weights * input_vec;
+									auto const row_idx = static_cast<Eigen::Index>(local_id);
+									output_vec(row_idx) = weights.row(row_idx).dot(input_vec);
 								});
 						});
 					q.wait_and_throw();
