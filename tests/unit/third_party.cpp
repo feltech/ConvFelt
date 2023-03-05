@@ -408,7 +408,16 @@ SCENARIO("SyCL with ConvGrid")
 			q.submit(
 				[&](sycl::handler & cgh)
 				{
+				  cgh.prefetch(pgrid->data().data(), pgrid->data().size());
+				});
+			q.submit(
+				[&](sycl::handler & cgh)
+				{
 					cgh.prefetch(pgrid->children().data().data(), pgrid->children().data().size());
+				});
+			q.submit(
+				[&](sycl::handler & cgh)
+				{
 					sycl::stream os{2048, 256, cgh};
 					[[maybe_unused]] auto const scoped_stream = pgrid->scoped_stream(&os);
 
@@ -544,14 +553,6 @@ SCENARIO("Applying filter to ConvGrid")
 					q.submit(
 						[&](sycl::handler & cgh)
 						{
-							cgh.prefetch(weights_data, weights_size);
-							cgh.prefetch(
-								filter_input_grid->children().data().data(),
-								filter_input_grid->children().data().size());
-							cgh.prefetch(
-								filter_output_grid->children().data().data(),
-								filter_output_grid->children().data().size());
-
 							sycl::stream os{2048, 256, cgh};
 							[[maybe_unused]] auto const scoped_input_stream =
 								filter_input_grid->scoped_stream(&os);
