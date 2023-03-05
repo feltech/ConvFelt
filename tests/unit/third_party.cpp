@@ -587,6 +587,8 @@ SCENARIO("Applying filter to ConvGrid")
 					{
 						assert_expected_values();
 					}
+
+					sycl::free(weights_data, ctx);
 				}
 
 				WHEN("filter is applied to grid using oneMKL")
