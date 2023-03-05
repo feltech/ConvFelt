@@ -19,7 +19,7 @@ endif ()
 # SyCL support
 
 if (NOT HIPSYCL_TARGETS)
-	set(HIPSYCL_TARGETS cuda.integrated-multipass:sm_70 CACHE STRING
+	set(HIPSYCL_TARGETS omp,cuda.integrated-multipass:sm_70 CACHE STRING
 		"hipSycl compilation flow targets")
 endif ()
 
@@ -96,6 +96,7 @@ include(${CMAKE_BINARY_DIR}/conan.cmake)
 find_package(oneMKL CONFIG REQUIRED)
 message(STATUS "${MKL_IMPORTED_TARGETS}") #Provides available list of targets based on input
 target_compile_definitions(MKL::onemkl INTERFACE ENABLE_CUBLAS_BACKEND)
+target_link_directories(MKL::onemkl INTERFACE "/home/dave/workspace/oneMKL/cmake-build-debug-clang-14/lib")
 
 #------------------------------------------------------------
 # Add project_options CMake library
