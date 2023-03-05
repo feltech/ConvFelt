@@ -317,8 +317,7 @@ SCENARIO("Basic SyCL usage")
 		WHEN("vectors are added using sycl")
 		{
 			{
-				sycl::gpu_selector selector;
-				sycl::queue q{selector};
+				sycl::queue q{sycl::gpu_selector_v};
 				sycl::range<1> work_items{a.size()};
 				sycl::buffer<float> buff_a(a.data(), a.size());
 				sycl::buffer<float> buff_b(b.data(), b.size());
@@ -387,9 +386,8 @@ SCENARIO("SyCL with ConvGrid")
 {
 	GIVEN("Shared grid")
 	{
-		sycl::gpu_selector selector;
 		sycl::context ctx;
-		sycl::device dev{selector};
+		sycl::device dev{sycl::gpu_selector_v};
 		using ConvGrid = convfelt::ConvGridTD<float, 3, convfelt::UsmSharedAllocator>;
 
 		auto const pgrid = convfelt::make_unique_sycl<ConvGrid>(
@@ -460,9 +458,9 @@ SCENARIO("Applying filter to ConvGrid")
 
 		AND_GIVEN("image is split into filter regions")
 		{
-			sycl::gpu_selector selector;
 			sycl::context ctx;
-			sycl::device dev{selector};
+			sycl::device dev{sycl::gpu_selector_v};
+			// sycl::device dev{sycl::cpu_selector_v};
 			using FilterGrid =
 				convfelt::ConvGridTD<convfelt::Scalar, 3, convfelt::UsmSharedAllocator>;
 
