@@ -96,7 +96,7 @@ static constexpr decltype(auto) val(concepts::GridWithData auto & grid)
 	return grid.data();
 };
 
-static constexpr auto idx_and_val(concepts::GridWithData auto & grid)
+static constexpr decltype(auto) idx_and_val(concepts::GridWithData auto & grid)
 {
 	return ranges::views::enumerate(grid.data());
 };
