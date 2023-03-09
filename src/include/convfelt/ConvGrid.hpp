@@ -10,9 +10,11 @@
 #include <Felt/Impl/Mixin/PartitionedMixin.hpp>
 #include <Felt/Impl/Util.hpp>
 
+#include "assert_compat.hpp"
+#include "felt2/components/core.hpp"
+#include "felt2/components/sycl.hpp"
 #include "Numeric.hpp"
 #include "iter.hpp"
-#include "assert_compat.hpp"
 
 /**
  * This header contains the grid structures used by ConvFelt.
@@ -207,56 +209,104 @@ private:
 }	// namespace Grid
 }  // namespace Mixin
 
-template <typename T, Dim D, template <typename> class A>
+template <typename T, Dim D, bool is_device_shared = false>
 class ByRef
-	: FELT_MIXINS(
-		  (ByRef<T, D, A>),
-		  (Grid::Access::ByRef)(Grid::Activate)(Grid::DataSpan)(Grid::Size)(Grid::AssertBounds),
-		  (Grid::Index))
-	  //{
+{
 private:
-	using This = ByRef<T, D, A>;
-	using Traits = Impl::Traits<This>;
+	using This = ByRef<T, D>;
 
-	using AccessImpl = Impl::Mixin::Grid::Access::ByRef<This>;
-	using ActivateImpl = Impl::Mixin::Grid::Activate<This>;
-	using DataImpl = Impl::Mixin::Grid::DataSpan<This>;
-	using SizeImpl = Impl::Mixin::Grid::Size<This>;
-	using AssertBoundsImpl = Felt::Impl::Mixin::Grid::AssertBounds<This>;
-	using IndexImpl = Felt::Impl::Mixin::Grid::Index<This>;
+	struct Traits
+	{
+		using Leaf = T;
+		static constexpr Dim k_dims = D;
+	};
 
-	using VecDi = Felt::VecDi<Traits::t_dims>;
-	using Leaf = typename Traits::Leaf;
+	using VecDi = VecDi<Traits::k_dims>;
+	using Leaf = Traits::Leaf;
+
+	using SizeImpl = felt2::components::Size<Traits>;
+	using StreamImpl = felt2::components::Stream;
+	using DataImpl = std::conditional_t<
+		is_device_shared,
+		felt2::components::USMDataArray<Traits>,
+		felt2::components::DataArray<Traits>>;
+	using AssertBoundsImpl =
+		felt2::components::AssertBounds<Traits, StreamImpl, SizeImpl, DataImpl>;
+	using AccessImpl = felt2::components::AccessByRef<Traits, SizeImpl, DataImpl, AssertBoundsImpl>;
+	using ActivateImpl = felt2::components::Activate<Traits, SizeImpl, DataImpl, StreamImpl>;
+
+	SizeImpl const m_size_impl;
+	StreamImpl m_stream_impl{};
+	AssertBoundsImpl const m_assert_bounds_impl{m_stream_impl, m_size_impl, m_data_impl};
+	AccessImpl m_access_impl{m_size_impl, m_data_impl, m_assert_bounds_impl};
+	DataImpl m_data_impl;
+	ActivateImpl m_activate_impl;
 
 public:
-	ByRef(const VecDi & size_, const VecDi & offset_, Leaf background_)
-		: ActivateImpl{std::move(background_)}, SizeImpl{size_, offset_}
-	{
-		ActivateImpl::activate();
-	}
-
 	ByRef(
 		const VecDi & size_,
 		const VecDi & offset_,
 		Leaf background_,
 		sycl::context context,
 		sycl::device device)
-		requires convfelt::uses_usm_allocator<Traits>
-		: ActivateImpl{std::move(background_)}, DataImpl{context, device}, SizeImpl{size_, offset_}
+		requires (is_device_shared)
+		: m_size_impl{size_, offset_},
+		  m_data_impl{{std::move(context), std::move(device)}},
+		  m_activate_impl{m_size_impl, m_data_impl, m_stream_impl, background_}
 	{
-		ActivateImpl::activate();
+		m_activate_impl.activate();
 	}
 
-	using AccessImpl::get;
-	using AccessImpl::index;
-	using ActivateImpl::activate;
-	using AssertBoundsImpl::set_stream;
-	using AssertBoundsImpl::assert_pos_bounds;
-	using AssertBoundsImpl::assert_pos_idx_bounds;
-	using DataImpl::data;
-	using SizeImpl::offset;
-	using SizeImpl::size;
+	ByRef(const VecDi & size_, const VecDi & offset_, Leaf background_)
+		requires (!is_device_shared)
+		: m_size_impl{size_, offset_},
+		  m_data_impl{},
+		  m_activate_impl{m_size_impl, m_data_impl, m_stream_impl, background_}
+	{
+		m_activate_impl.activate();
+	}
+	decltype(auto) data(auto &&... args) noexcept
+	{
+		return m_data_impl.data(std::forward<decltype(args)>(args)...);
+	}
+	decltype(auto) data(auto &&... args) const noexcept
+	{
+		return m_data_impl.data(std::forward<decltype(args)>(args)...);
+	}
+	decltype(auto) index(auto &&... args) const noexcept
+	{
+		return m_size_impl.index(std::forward<decltype(args)>(args)...);
+	}
+	decltype(auto) get(VecDi const& pos) noexcept
+	{
+		return m_access_impl.get(pos);
+	}
+	decltype(auto) get(VecDi const& pos) const noexcept
+	{
+		return m_access_impl.get(pos);
+	}
+	decltype(auto) get(auto &&... args) noexcept
+	{
+		return m_access_impl.get(std::forward<decltype(args)>(args)...);
+	}
+	decltype(auto) get(auto &&... args) const noexcept
+	{
+		return m_access_impl.get(std::forward<decltype(args)>(args)...);
+	}
+	decltype(auto) offset(auto &&... args) const noexcept
+	{
+		return m_size_impl.offset(std::forward<decltype(args)>(args)...);
+	}
+	decltype(auto) size(auto &&... args) const noexcept
+	{
+		return m_size_impl.size(std::forward<decltype(args)>(args)...);
+	}
+	decltype(auto) set_stream(auto &&... args) noexcept
+	{
+		return m_stream_impl.set_stream(std::forward<decltype(args)>(args)...);
+	}
 };
+
 }  // namespace Felt::Impl
 
 namespace convfelt
@@ -471,7 +521,7 @@ struct Traits<convfelt::ConvGridTD<T, D, A>>
 	static constexpr Dim t_dims = D;
 
 	using Child = convfelt::FilterTD<T, D>;
-	using Children = Felt::Impl::ByRef<Child, D, A>;
+	using Children = Felt::Impl::ByRef<Child, D, !std::is_same_v<A<T>, std::allocator<T>>>;
 };
 
 template <typename T, Felt::Dim D>
@@ -482,20 +532,10 @@ struct Traits<convfelt::FilterTD<T, D>>
 	static constexpr Dim t_dims = D;
 };
 
-/**
- * Traits for Tracked::ByRef.
- *
- * @tparam T type of data to store in the grid.
- * @tparam D number of dimensions of the grid.
- */
-template <typename T, Felt::Dim D, template <typename> class A>
-struct Traits<Felt::Impl::ByRef<T, D, A>>
+template <typename T, Felt::Dim D, bool is_device_shared>
+struct Traits<Felt::Impl::ByRef<T, D, is_device_shared>>
 {
-	/// Single index stored in each grid node.
 	using Leaf = T;
-	using Allocator = A<T>;
-	using DataArray = std::vector<Leaf, Allocator>;
-	/// Dimension of grid.
 	static constexpr Dim t_dims = D;
 };
 }  // namespace Felt::Impl
