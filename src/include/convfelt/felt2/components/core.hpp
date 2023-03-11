@@ -57,6 +57,20 @@ concept IsData = requires(T obj) {
 					 } -> std::convertible_to<PosIdx>;
 				 };
 
+template <typename T>
+using value_type_t = std::remove_pointer_t<std::decay_t<T>>;
+
+template <class T>
+concept IsResizeableData = IsData<T> &&
+	requires(T obj) {
+		{
+			obj.resize(std::declval<PosIdx>())
+		};
+		{
+			obj.resize(std::declval<PosIdx>(), std::declval<value_type_t<decltype(obj.data())>>())
+		};
+	};
+
 template <class T>
 concept IsResizeable = requires(T obj) {
 						   {
@@ -73,6 +87,13 @@ concept HasData = requires(T obj) {
 						  obj.data()
 					  } -> IsData;
 				  };
+
+template <class T>
+concept HasResizeableData = requires(T obj) {
+								{
+									obj.data()
+								} -> IsResizeableData;
+							};
 
 template <class T>
 concept HasStream = requires(T t) {
@@ -152,13 +173,13 @@ template <class T>
 concept IsGrid = HasLeafType<T> && HasData<T> && HasSize<T> && HasReadAccess<T>;
 
 template <class T>
-concept IsResizeableGrid = IsGrid<T> && HasResize<T>;
+concept IsSpanGrid = IsGrid<T> && HasResize<T> && HasResizeableData<T>;
 
 template <class T>
-concept IsGridOfGrids = IsGrid<T> && requires {
-										 typename T::Leaf;
-										 IsResizeableGrid<typename T::Leaf>;
-									 };
+concept IsGridOfSpanGrids = IsGrid<T> && requires {
+											 typename T::Leaf;
+											 IsSpanGrid<typename T::Leaf>;
+										 };
 
 template <class T>
 concept HasChildrenSize = requires(T t) {
@@ -362,8 +383,13 @@ struct AssertBounds
 
 	void assert_pos_bounds(const VecDi & pos_, const char * title_) const
 	{
-		if (m_stream_impl.has_stream() && !m_size_impl.inside(pos_))
+		if (!m_size_impl.inside(pos_))
 		{
+			if (!m_stream_impl.has_stream())
+				assert(
+					m_size_impl.inside(pos_) &&
+					"assert_pos_bounds: debug unavailable, no stream set");
+
 			m_stream_impl.get_stream()
 				<< "AssertionError: " << title_ << " assert_pos_bounds(" << pos_(0);
 			for (Dim axis = 1; axis < pos_.size(); ++axis)
@@ -375,8 +401,12 @@ struct AssertBounds
 
 	void assert_pos_idx_bounds(const PosIdx pos_idx_, const char * title_) const
 	{
-		if (m_stream_impl.has_stream() && pos_idx_ >= m_data_impl.data().size())
+		if (pos_idx_ >= m_data_impl.data().size())
 		{
+			if (!m_stream_impl.has_stream())
+				assert(
+					pos_idx_ < m_data_impl.data().size() &&
+					"assert_pos_idx_bounds: debug unavailable, no stream set");
 			auto pos = m_size_impl.index(pos_idx_);
 			m_stream_impl.get_stream() << "AssertionError: " << title_ << " assert_pos_idx_bounds("
 									   << pos_idx_ << ") i.e. ";
@@ -697,6 +727,7 @@ struct ChildrenSize
 
 			if ((children_size.array() * m_child_size.array()).matrix() != m_size_impl.size())
 				children_size += VecDi::Constant(1);
+
 			return children_size;
 		}()};
 	PosIdx const m_num_children{static_cast<PosIdx>(m_children_size.prod())};
@@ -761,9 +792,17 @@ struct ChildrenSize
 		return pos_child;
 	}
 
-	template <IsGridOfGrids Children>
-	void resize_children(Children & children) const
+	template <IsGridOfSpanGrids Children>
+	Children make_children_span(HasResizeableData auto & data_impl, auto &&... children_args) const
 	{
+		data_impl.data().resize(m_num_elems_per_child * m_num_children);
+		std::span const parent_data{data_impl.data()};
+
+		Children children{
+			m_children_size,
+			m_size_impl.offset(),
+			std::forward<decltype(children_args)>(children_args)...};
+
 		// Set each child sub-grid's size and offset.
 		for (PosIdx pos_child_idx = 0; pos_child_idx < children.data().size(); pos_child_idx++)
 		{
@@ -777,13 +816,22 @@ struct ChildrenSize
 			// Position of child in world space, including offset.
 			auto offset_child = offset_child_offset + m_size_impl.offset();
 
+			// Calculate overflow at edge of grid.
 			auto pos_lower = (pos_child.array() * m_child_size.array()).matrix();
 			auto pos_upper = (pos_lower.array() + m_child_size.array()).matrix();
 			auto signed_overflow = pos_upper - m_size_impl.size();
 			auto overflow = signed_overflow.cwiseMax(0);
 
-			children.get(pos_child_idx).resize(m_child_size - overflow, offset_child);
+			auto & child = children.get(pos_child_idx);
+
+			child.resize(m_child_size - overflow, offset_child);
+
+			auto const num_used_child_idxs = static_cast<felt2::PosIdx>(child.size().prod());
+			child.data() =
+				parent_data.subspan(pos_child_idx * m_num_elems_per_child, num_used_child_idxs);
 		}
+
+		return children;
 	}
 };
 

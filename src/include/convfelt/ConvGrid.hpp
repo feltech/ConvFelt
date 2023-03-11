@@ -465,7 +465,7 @@ public:
 	};
 
 	ConvGridTD(const VecDi & size_, const felt2::VecDi<D - 1> & child_window_)
-		: ConvGridTD{size_, calc_child_size(child_window_, size_), {0, 0, 0}}
+		: ConvGridTD{size_, window_to_size(child_window_, size_), {0, 0, 0}}
 	{
 	}
 
@@ -482,27 +482,21 @@ public:
 		requires(is_device_shared)
 		: m_data_impl{{context, device}},
 		  m_size_impl{size_, {0, 0, 0}},
-		  m_children_size_impl{m_size_impl, calc_child_size(child_window_, m_size_impl.size())},
-		  m_children{
-			  m_children_size_impl.children_size(),
-			  VecDi::Zero(),
-			  Child{{VecDi::Zero(), VecDi::Zero()}},
-			  context,
-			  device}
+		  m_children_size_impl{m_size_impl, window_to_size(child_window_, m_size_impl.size())},
+		  m_children{m_children_size_impl.template make_children_span<decltype(m_children)>(
+			  m_data_impl, Child{{VecDi::Zero(), VecDi::Zero()}}, context, device)}
 	{
-		initialise();
+		assert_child_size();
 	}
 
 	ConvGridTD(const VecDi & size_, const VecDi & child_size_, const VecDi & offset_)
 		requires(!is_device_shared)
 		: m_size_impl{size_, offset_},
 		  m_children_size_impl{m_size_impl, child_size_},
-		  m_children{
-			  m_children_size_impl.children_size(),
-			  VecDi::Zero(),
-			  Child{{VecDi::Zero(), VecDi::Zero()}}}
+		  m_children{m_children_size_impl.template make_children_span<decltype(m_children)>(
+			  m_data_impl, Child{{VecDi::Zero(), VecDi::Zero()}})}
 	{
-		initialise();
+		assert_child_size();
 	}
 
 	const ChildrenGrid & children() const noexcept
@@ -561,30 +555,15 @@ public:
 	}
 
 private:
-	void initialise()
+	void assert_child_size()
 	{
 		assert(
 			m_children_size_impl.child_size()(m_children_size_impl.child_size().size() - 1) ==
-				size()(size().size() - 1) &&
+				m_size_impl.size()(m_size_impl.size().size() - 1) &&
 			"Depth of children must be same as depth of parent");
-
-		felt2::Vec2u const matrix_size{
-			m_children_size_impl.num_elems_per_child(), m_children_size_impl.num_children()};
-
-		m_data_impl.data().resize(matrix_size.prod());
-		std::span const all_data{m_data_impl.data()};
-
-		m_children_size_impl.resize_children(m_children);
-
-		for (auto const & [idx, child] : convfelt::iter::idx_and_val(m_children))
-		{
-			auto const num_used_child_idxs = static_cast<felt2::PosIdx>(child.size().prod());
-			child.data() = all_data.subspan(
-				idx * m_children_size_impl.num_elems_per_child(), num_used_child_idxs);
-		}
 	}
 
-	VecDi calc_child_size(const felt2::VecDi<D - 1> & window_, const VecDi & size_)
+	VecDi window_to_size(const felt2::VecDi<D - 1> & window_, const VecDi & size_)
 	{
 		VecDi child_size_;
 		child_size_ << window_, size_(size_.size() - 1);
