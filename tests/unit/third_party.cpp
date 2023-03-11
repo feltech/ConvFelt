@@ -50,7 +50,6 @@ using span = std::span<Args...>;
 #include <cppcoro/task.hpp>
 
 #include <convfelt/ConvGrid.hpp>
-#include <convfelt/Numeric.hpp>
 #include <convfelt/iter.hpp>
 #include <convfelt/memory.hpp>
 
@@ -102,7 +101,7 @@ SCENARIO("Using OpenImageIO with cppcoro and loading into Felt grid")
 			AND_WHEN("image is loaded into grid with no zero-padding")
 			{
 				auto image_grid_spec = image.spec();
-				image_grid_spec.format = OIIO::TypeDescFromC<convfelt::Scalar>::value();
+				image_grid_spec.format = OIIO::TypeDescFromC<felt2::Scalar>::value();
 
 				convfelt::InputGrid image_grid{
 					{image_grid_spec.height, image_grid_spec.width, image_grid_spec.nchannels},
@@ -133,7 +132,7 @@ SCENARIO("Using OpenImageIO with cppcoro and loading into Felt grid")
 				auto image_grid_spec = image.spec();
 				image_grid_spec.width += 2;
 				image_grid_spec.height += 2;
-				image_grid_spec.format = OIIO::TypeDescFromC<convfelt::Scalar>::value();
+				image_grid_spec.format = OIIO::TypeDescFromC<felt2::Scalar>::value();
 
 				convfelt::InputGrid image_grid{
 					{image.spec().height + 2, image.spec().width + 2, image_grid_spec.nchannels},
@@ -185,7 +184,7 @@ SCENARIO("Input/output ConvGrids")
 		auto image_grid_spec = image.spec();
 		image_grid_spec.width += 2;
 		image_grid_spec.height += 2;
-		image_grid_spec.format = OIIO::TypeDescFromC<convfelt::Scalar>::value();
+		image_grid_spec.format = OIIO::TypeDescFromC<felt2::Scalar>::value();
 
 		convfelt::InputGrid image_grid{
 			{image.spec().height + 2, image.spec().width + 2, image_grid_spec.nchannels},
@@ -289,7 +288,7 @@ SCENARIO("Input/output ConvGrids")
 					for (auto const & filter_pos_idx :
 						 convfelt::iter::pos_idx(filter_output_grid.children()))
 					{
-						convfelt::Scalar const expected =
+						felt2::Scalar const expected =
 							filter_input_grid.children().get(filter_pos_idx).matrix().sum();
 
 						const felt2::Vec3i filter_pos =
@@ -445,7 +444,7 @@ SCENARIO("Applying filter to ConvGrid")
 		auto image_grid_spec = image.spec();
 		image_grid_spec.width += 2;
 		image_grid_spec.height += 2;
-		image_grid_spec.format = OIIO::TypeDescFromC<convfelt::Scalar>::value();
+		image_grid_spec.format = OIIO::TypeDescFromC<felt2::Scalar>::value();
 
 		convfelt::InputGrid image_grid{
 			{image.spec().height + 2, image.spec().width + 2, image_grid_spec.nchannels},
@@ -460,7 +459,7 @@ SCENARIO("Applying filter to ConvGrid")
 			sycl::context ctx;
 			sycl::device dev{sycl::gpu_selector_v};
 			// sycl::device dev{sycl::cpu_selector_v};
-			using FilterGrid = convfelt::ConvGridTD<convfelt::Scalar, 3, true>;
+			using FilterGrid = convfelt::ConvGridTD<felt2::Scalar, 3, true>;
 
 			const felt2::NodeIdx filter_stride = 2;
 
@@ -510,18 +509,18 @@ SCENARIO("Applying filter to ConvGrid")
 					filter_output_grid->children().size() == filter_input_grid->children().size());
 
 				using MatrixMap =
-					Eigen::Map<Eigen::Matrix<convfelt::Scalar, Eigen::Dynamic, Eigen::Dynamic>, 0>;
+					Eigen::Map<Eigen::Matrix<felt2::Scalar, Eigen::Dynamic, Eigen::Dynamic>, 0>;
 				using ColVectorMap =
-					Eigen::Map<Eigen::Matrix<convfelt::Scalar, Eigen::Dynamic, 1>, 0>;
+					Eigen::Map<Eigen::Matrix<felt2::Scalar, Eigen::Dynamic, 1>, 0>;
 
 				std::size_t weights_size = static_cast<std::size_t>(filter_output_shape.prod()) *
 					static_cast<std::size_t>(filter_input_shape.prod());
-				auto weights_data = sycl::malloc_shared<convfelt::Scalar>(weights_size, dev, ctx);
+				auto weights_data = sycl::malloc_shared<felt2::Scalar>(weights_size, dev, ctx);
 
 				MatrixMap weights{
 					weights_data, filter_output_shape.prod(), filter_input_shape.prod()};
 				weights.setRandom();
-				//				Eigen::Matrix<convfelt::Scalar, Eigen::Dynamic, 1> wrong{
+				//				Eigen::Matrix<felt2::Scalar, Eigen::Dynamic, 1> wrong{
 				//					filter_output_grid->child_size().prod(), 1};
 				//				wrong.setConstant(1);
 
@@ -563,7 +562,7 @@ SCENARIO("Applying filter to ConvGrid")
 							assert(weights.cols() == filter_input_grid->child_size().prod());
 
 							sycl::accessor<
-								convfelt::Scalar,
+								felt2::Scalar,
 								1,
 								sycl::access::mode::read_write,
 								sycl::access::target::local>
@@ -590,7 +589,7 @@ SCENARIO("Applying filter to ConvGrid")
 
 									item.async_work_group_copy(
 											input_child_data.get_pointer(),
-											sycl::global_ptr<convfelt::Scalar>{
+											sycl::global_ptr<felt2::Scalar>{
 												input_child.data().data()},
 											input_child.data().size())
 										.wait();

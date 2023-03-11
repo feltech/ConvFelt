@@ -280,11 +280,7 @@ public:
 		felt2::components::AssertBounds<Traits, StreamImpl, SizeImpl, DataImpl>;
 	using AccessImpl =
 		felt2::components::AccessByValue<Traits, SizeImpl, DataImpl, AssertBoundsImpl>;
-	using ActivateImpl = felt2::components::Activate<Traits, SizeImpl, DataImpl, StreamImpl>;
 	using MatrixImpl = felt2::components::EigenMap<Traits, DataImpl>;
-
-	using DataArray = typename DataImpl::Array;
-	using ArrayColMap = typename MatrixImpl::ArrayColMap;
 
 private:
 	DataImpl m_data_impl{};
