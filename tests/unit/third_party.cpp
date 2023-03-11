@@ -388,7 +388,7 @@ SCENARIO("SyCL with ConvGrid")
 	{
 		sycl::context ctx;
 		sycl::device dev{sycl::gpu_selector_v};
-		using ConvGrid = convfelt::ConvGridTD<float, 3, convfelt::UsmSharedAllocator>;
+		using ConvGrid = convfelt::ConvGridTD<float, 3, true>;
 
 		auto const pgrid = convfelt::make_unique_sycl<ConvGrid>(
 			dev, ctx, Felt::Vec3i{4, 4, 3}, Felt::Vec2i{2, 2}, ctx, dev);
@@ -403,14 +403,10 @@ SCENARIO("SyCL with ConvGrid")
 			sycl::range<1> work_items{pgrid->children().data().size()};
 
 			sycl::queue q{ctx, dev};
+			q.submit([&](sycl::handler & cgh)
+					 { cgh.prefetch(pgrid->data().data(), pgrid->data().size()); });
 			q.submit(
-				[&](sycl::handler & cgh)
-				{
-				  cgh.prefetch(pgrid->data().data(), pgrid->data().size());
-				});
-			q.submit(
-				[&](sycl::handler & cgh)
-				{
+				[&](sycl::handler & cgh) {
 					cgh.prefetch(pgrid->children().data().data(), pgrid->children().data().size());
 				});
 			q.submit(
@@ -461,8 +457,7 @@ SCENARIO("Applying filter to ConvGrid")
 			sycl::context ctx;
 			sycl::device dev{sycl::gpu_selector_v};
 			// sycl::device dev{sycl::cpu_selector_v};
-			using FilterGrid =
-				convfelt::ConvGridTD<convfelt::Scalar, 3, convfelt::UsmSharedAllocator>;
+			using FilterGrid = convfelt::ConvGridTD<convfelt::Scalar, 3, true>;
 
 			const Felt::NodeIdx filter_stride = 2;
 
@@ -471,8 +466,8 @@ SCENARIO("Applying filter to ConvGrid")
 				Felt::Vec2i const filter_input_window{4, 4};
 				Felt::Vec3i const filter_input_shape{4, 4, 3};
 
-				Felt::Vec3i num_filters = (image_grid.size() - filter_input_shape);
-				num_filters = num_filters / filter_stride + Felt::Vec3i::Ones();
+				Felt::Vec3i num_filters =
+					Felt::Vec3i::Ones() + (image_grid.size() - filter_input_shape) / filter_stride;
 				Felt::Vec3i const num_connections =
 					(num_filters.array() * filter_input_shape.array()).matrix();
 

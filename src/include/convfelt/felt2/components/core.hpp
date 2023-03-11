@@ -93,15 +93,28 @@ concept HasSize = requires(T t) {
 						  t.offset()
 					  } -> std::convertible_to<typename T::VecDi>;
 					  {
-						  t.inside(std::declval<typename T::VecDi>())
-					  } -> std::convertible_to<bool>;
-					  {
 						  t.index(std::declval<typename T::VecDi>())
 					  } -> std::convertible_to<PosIdx>;
 					  {
 						  t.index(std::declval<PosIdx>())
 					  } -> std::convertible_to<typename T::VecDi>;
 				  };
+
+template <class T>
+concept HasSizeCheck = HasSize<T> && requires(T t) {
+										 {
+											 t.inside(std::declval<typename T::VecDi>())
+										 } -> std::convertible_to<bool>;
+									 };
+
+template <class T>
+concept HasResize =
+	requires(T t) {
+		typename T::VecDi;
+		{
+			t.resize(std::declval<typename T::VecDi>(), std::declval<typename T::VecDi>())
+		};
+	};
 
 template <class T, Dim D>
 concept HasAssertBounds =
@@ -122,6 +135,40 @@ concept HasAssertBounds =
 			t.assert_pos_idx_bounds(std::declval<PosIdx>(), std::declval<const char *>())
 		};
 	};
+
+template <class T>
+concept HasReadAccess = requires(T t) {
+							typename T::VecDi;
+							typename T::Leaf;
+							{
+								t.get(std::declval<typename T::VecDi>())
+							} -> std::convertible_to<const typename T::Leaf &>;
+							{
+								t.get(std::declval<PosIdx>())
+							} -> std::convertible_to<const typename T::Leaf &>;
+						};
+template <class T>
+concept IsGrid = HasLeafType<T> && HasData<T> && HasSize<T> && HasReadAccess<T>;
+
+template <class T>
+concept IsResizeableGrid = IsGrid<T> && HasResize<T>;
+
+template <class T>
+concept IsGridOfGrids = IsGrid<T> && requires {
+										 typename T::Leaf;
+										 IsResizeableGrid<typename T::Leaf>;
+									 };
+
+template <class T>
+concept HasChildrenSize = requires(T t) {
+							  typename T::VecDi;
+							  {
+								  t.num_elems_per_child()
+							  } -> std::same_as<PosIdx>;
+							  {
+								  t.num_children()
+							  } -> std::same_as<PosIdx>;
+						  };
 
 template <typename T, Dim D>
 void format_pos(IsStream auto & stream, VecDT<T, D> const & pos)
@@ -292,7 +339,7 @@ struct ResizableSize
 	}
 };
 
-template <HasDims Traits, HasStream Stream, HasSize Size, HasData Data>
+template <HasDims Traits, HasStream Stream, HasSizeCheck Size, HasData Data>
 struct AssertBounds
 {
 	static constexpr Dim k_dims = Traits::k_dims;
@@ -629,6 +676,113 @@ struct DataArraySpan
 	void serialize(Archive & ar)
 	{
 		ar(m_data);
+	}
+};
+
+template <HasDims Traits, HasSize Size>
+struct ChildrenSize
+{
+	static constexpr PosIdx k_dims = Traits::k_dims;
+	using VecDi = felt2::VecDi<k_dims>;
+
+	Size const & m_size_impl;
+	/// Size of a child sub-grid.
+	VecDi const m_child_size;
+	VecDi const m_child_offset{(m_size_impl.offset().array() / m_child_size.array()).matrix()};
+	VecDi const m_children_size{
+		[&]() noexcept
+		{
+			VecDi children_size = (m_size_impl.size().array() / m_child_size.array()).matrix();
+
+			if ((children_size.array() * m_child_size.array()).matrix() != m_size_impl.size())
+				children_size += VecDi::Constant(1);
+			return children_size;
+		}()};
+	PosIdx const m_num_children{static_cast<PosIdx>(m_children_size.prod())};
+	PosIdx const m_num_elems_per_child{static_cast<PosIdx>(m_child_size.prod())};
+
+	/**
+	 * Get size of child sub-grids.
+	 *
+	 * @return size of child sub-grid.
+	 */
+	[[nodiscard]] const VecDi & child_size() const noexcept
+	{
+		return m_child_size;
+	}
+
+	[[nodiscard]] const VecDi & child_offset() const noexcept
+	{
+		return m_child_offset;
+	}
+
+	[[nodiscard]] const VecDi & children_size() const noexcept
+	{
+		return m_children_size;
+	}
+
+	[[nodiscard]] PosIdx num_children() const noexcept
+	{
+		return m_num_children;
+	}
+
+	[[nodiscard]] PosIdx num_elems_per_child() const noexcept
+	{
+		return m_num_elems_per_child;
+	}
+	/**
+	 * Calculate the position of a child grid (i.e. partition) given the position of leaf grid node.
+	 *
+	 * @param pos_leaf_ leaf grid node position vector.
+	 * @return position index of spatial partition in which leaf position lies.
+	 */
+	[[nodiscard]] PosIdx pos_idx_child(const VecDi & pos_leaf_) const noexcept
+	{
+		// Encode child position as an index.
+		return felt2::index(pos_child(pos_leaf_), m_size_impl.size(), m_size_impl.offset());
+	}
+
+	/**
+	 * Calculate the position of a child grid (i.e. partition) given the position of leaf grid node.
+	 *
+	 * @param pos_leaf_ leaf grid node position vector.
+	 * @return position vector of spatial partition in which leaf position lies.
+	 */
+	[[nodiscard]] VecDi pos_child(const VecDi & pos_leaf_) const noexcept
+	{
+		// Position of leaf, without offset.
+		auto pos_leaf_offset = pos_leaf_ - m_size_impl.offset();
+		// Position of child grid containing leaf, without offset.
+		auto pos_child_offset = (pos_leaf_offset.array() / m_child_size.array()).matrix();
+		// Position of child grid containing leaf, including offset.
+		auto pos_child = pos_child_offset + m_child_offset;
+		// Encode child position as an index.
+		return pos_child;
+	}
+
+	template <IsGridOfGrids Children>
+	void resize_children(Children & children) const
+	{
+		// Set each child sub-grid's size and offset.
+		for (PosIdx pos_child_idx = 0; pos_child_idx < children.data().size(); pos_child_idx++)
+		{
+			// Position of child in children grid.
+			VecDi const pos_child = children.index(pos_child_idx);
+			// Position of child in children grid, without offset.
+			auto const pos_child_offset = pos_child - children.offset();
+			// Scaled position of child == position in world space, without offset.
+			auto const offset_child_offset =
+				(pos_child_offset.array() * m_child_size.array()).matrix();
+			// Position of child in world space, including offset.
+			auto offset_child = offset_child_offset + m_size_impl.offset();
+
+			auto pos_lower = (pos_child.array() * m_child_size.array()).matrix();
+			auto pos_upper = (pos_lower.array() + m_child_size.array()).matrix();
+			auto signed_overflow = pos_upper - m_size_impl.size();
+			auto overflow = signed_overflow.cwiseMax(0);
+
+			children.get(pos_child_idx).resize(m_child_size - overflow, offset_child);
+		}
 	}
 };
 

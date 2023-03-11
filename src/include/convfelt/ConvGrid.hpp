@@ -224,9 +224,11 @@ private:
 		static constexpr Dim k_dims = D;
 	};
 
+public:
 	using VecDi = VecDi<Traits::k_dims>;
 	using Leaf = Traits::Leaf;
 
+private:
 	using SizeImpl = felt2::components::Size<Traits>;
 	using StreamImpl = felt2::components::Stream;
 	using DataImpl = std::conditional_t<
@@ -319,158 +321,6 @@ template <typename T, Felt::Dim D>
 using InputGridTD = Felt::Impl::Grid::Simple<T, D>;
 using InputGrid = InputGridTD<convfelt::Scalar, 3>;
 
-template <typename T, Felt::Dim D, template <typename> class A = std::allocator>
-class ConvGridTD
-	: FELT_MIXINS(
-		  (ConvGridTD<T, D, A>),
-		  (Grid::Activate)(Grid::DataSpan)(Grid::Size)(Partitioned::Access)(Partitioned::Children)(
-			  Partitioned::Leafs)(Numeric::PartitionedAsColMajorMatrix)(Grid::AssertBounds),
-		  (Grid::Index))
-//{
-private:
-	using This = ConvGridTD<T, D, A>;
-	using Traits = Felt::Impl::Traits<This>;
-
-	using AccessImpl = Felt::Impl::Mixin::Partitioned::Access<This>;
-	using ChildrenImpl = Felt::Impl::Mixin::Partitioned::Children<This>;
-	using DataImpl = Felt::Impl::Mixin::Grid::DataSpan<This>;
-	using LeafsImpl = Felt::Impl::Mixin::Partitioned::Leafs<This>;
-	using PartitionedAsColMajorMatrixImpl =
-		Felt::Impl::Mixin::Numeric::PartitionedAsColMajorMatrix<This>;
-	using SizeImpl = Felt::Impl::Mixin::Grid::Size<This>;
-	using IndexImpl = Felt::Impl::Mixin::Grid::Index<This>;
-	using AssertBoundsImpl = Felt::Impl::Mixin::Grid::AssertBounds<This>;
-
-public:
-	using ChildrenGrid = typename ChildrenImpl::ChildrenGrid;
-	using Child = typename Traits::Child;
-	using VecDi = Felt::VecDi<D>;
-
-	struct scoped_stream_t
-	{
-#ifdef SYCL_DEVICE_ONLY
-		scoped_stream_t(This & parent, AssertBoundsImpl::Stream stream)
-			: m_parent{parent}, m_prev_stream{m_parent.get_stream()}
-		{
-			m_parent.set_stream(stream);
-			m_parent.children().set_stream(stream);
-			for (auto & child : convfelt::iter::val(m_parent.children())) child.set_stream(stream);
-		}
-
-		~scoped_stream_t()
-		{
-			m_parent.set_stream(m_prev_stream);
-			m_parent.children().set_stream(m_prev_stream);
-			for (auto & child : convfelt::iter::val(m_parent.children()))
-				child.set_stream(m_prev_stream);
-		}
-
-	private:
-		This & m_parent;
-		AssertBoundsImpl::Stream m_prev_stream;
-#endif
-	};
-
-	scoped_stream_t scoped_stream([[maybe_unused]] sycl::stream * stream)
-	{
-#ifdef SYCL_DEVICE_ONLY
-		return {*this, stream};
-#else
-		return {};
-#endif
-	};
-
-	ConvGridTD(const VecDi & size_, const Felt::VecDi<D - 1> & child_size_)
-		: ConvGridTD{size_, calc_child_size(child_size_, size_), {0, 0, 0}}
-	{
-	}
-
-	ConvGridTD(const VecDi & size_, const VecDi & child_size_)
-		: ConvGridTD{size_, child_size_, {0, 0, 0}}
-	{
-	}
-
-	ConvGridTD(
-		const VecDi & size_,
-		const Felt::VecDi<D - 1> & child_size_,
-		sycl::context context,
-		sycl::device device)
-		requires uses_usm_allocator<Traits>
-		: DataImpl{context, device},
-		  SizeImpl{size_, {0, 0, 0}},
-		  ChildrenImpl{
-			  size_,
-			  {0, 0, 0},
-			  calc_child_size(child_size_, size_),
-			  Child{{VecDi ::Zero(), VecDi::Zero()}},
-			  context,
-			  device},
-		  PartitionedAsColMajorMatrixImpl{
-			  ChildrenImpl::child_size(), ChildrenImpl::children().size()}
-	{
-		initialise();
-	}
-
-	ConvGridTD(const VecDi & size_, const VecDi & child_size_, const VecDi & offset_)
-		: SizeImpl{size_, offset_},
-		  ChildrenImpl{size_, offset_, child_size_, Child{{VecDi ::Zero(), VecDi::Zero()}}},
-		  PartitionedAsColMajorMatrixImpl{
-			  ChildrenImpl::child_size(), ChildrenImpl::children().size()}
-	{
-		initialise();
-	}
-
-	using AccessImpl::get;
-	using AccessImpl::set;
-	using AssertBoundsImpl::assert_pos_bounds;
-	using AssertBoundsImpl::assert_pos_idx_bounds;
-	using ChildrenImpl::child_size;
-	using ChildrenImpl::children;
-	using DataImpl::data;
-	using LeafsImpl::leafs;
-	using LeafsImpl::pos_child;
-	using LeafsImpl::pos_idx_child;
-	using PartitionedAsColMajorMatrixImpl::matrix;
-	using SizeImpl::inside;
-	using SizeImpl::offset;
-	using SizeImpl::size;
-
-private:
-	void initialise()
-	{
-		assert(
-			ChildrenImpl::child_size()(ChildrenImpl::child_size().size() - 1) ==
-			size()(size().size() - 1));
-
-		Felt::Vec2u const padded_matrix_size = calc_padded_matrix_size();
-
-		data().resize(padded_matrix_size.prod());
-		std::span const all_data{data()};
-
-		auto const num_child_idxs = static_cast<Felt::PosIdx>(child_size().prod());
-		auto const num_padded_child_idxs = static_cast<Felt::PosIdx>(padded_matrix_size(0));
-
-		for (auto const & [idx, child] : convfelt::iter::idx_and_val(children()))
-		{
-			child.data() = all_data.subspan(idx * num_padded_child_idxs, num_child_idxs);
-		}
-	}
-
-	VecDi calc_child_size(const Felt::VecDi<D - 1> & window_, const VecDi & size_)
-	{
-		VecDi child_size_;
-		child_size_ << window_, size_(size_.size() - 1);
-		return child_size_;
-	}
-
-	Felt::Vec2u calc_padded_matrix_size()
-	{
-		return {child_size().prod(), children().size().prod()};
-	}
-};
-
-using ConvGrid = ConvGridTD<convfelt::Scalar, 3>;
-
 template <typename T, Felt::Dim D>
 class FilterTD
 {
@@ -495,10 +345,10 @@ public:
 	using AccessImpl =
 		felt2::components::AccessByValue<Traits, SizeImpl, DataImpl, AssertBoundsImpl>;
 	using ActivateImpl = felt2::components::Activate<Traits, SizeImpl, DataImpl, StreamImpl>;
-	using EigenMapImpl = felt2::components::EigenMap<Traits, DataImpl>;
+	using MatrixImpl = felt2::components::EigenMap<Traits, DataImpl>;
 
 	using DataArray = typename DataImpl::Array;
-	using ArrayColMap = typename EigenMapImpl::ArrayColMap;
+	using ArrayColMap = typename MatrixImpl::ArrayColMap;
 
 private:
 	DataImpl m_data_impl{};
@@ -506,7 +356,7 @@ private:
 	StreamImpl m_stream_impl{};
 	AssertBoundsImpl const m_assert_bounds_impl{m_stream_impl, m_size_impl, m_data_impl};
 	AccessImpl m_access_impl{m_size_impl, m_data_impl, m_assert_bounds_impl};
-	EigenMapImpl const m_eigen_map_impl{m_data_impl};
+	MatrixImpl const m_matrix_impl{m_data_impl};
 
 public:
 	explicit FilterTD(SizeImpl size_impl) : m_size_impl{std::move(size_impl)} {}
@@ -517,7 +367,7 @@ public:
 		  m_stream_impl{other.m_stream_impl},
 		  m_assert_bounds_impl{m_stream_impl, m_size_impl, m_data_impl},
 		  m_access_impl{m_size_impl, m_data_impl, m_assert_bounds_impl},
-		  m_eigen_map_impl{m_data_impl}
+		  m_matrix_impl{m_data_impl}
 	{
 	}
 
@@ -527,7 +377,7 @@ public:
 		  m_stream_impl{std::move(other.m_stream_impl)},
 		  m_assert_bounds_impl{m_stream_impl, m_size_impl, m_data_impl},
 		  m_access_impl{m_size_impl, m_data_impl, m_assert_bounds_impl},
-		  m_eigen_map_impl{m_data_impl}
+		  m_matrix_impl{m_data_impl}
 	{
 	}
 
@@ -587,11 +437,11 @@ public:
 	}
 	decltype(auto) array(auto &&... args) const noexcept
 	{
-		return m_eigen_map_impl.array(std::forward<decltype(args)>(args)...);
+		return m_matrix_impl.array(std::forward<decltype(args)>(args)...);
 	}
 	decltype(auto) matrix(auto &&... args) const noexcept
 	{
-		return m_eigen_map_impl.matrix(std::forward<decltype(args)>(args)...);
+		return m_matrix_impl.matrix(std::forward<decltype(args)>(args)...);
 	}
 	decltype(auto) set_stream(auto &&... args) noexcept
 	{
@@ -609,29 +459,226 @@ public:
 
 using Filter = FilterTD<convfelt::Scalar, 3>;
 
+template <typename T, Felt::Dim D, bool is_device_shared = false>
+class ConvGridTD
+{
+private:
+	using This = ConvGridTD<T, D, is_device_shared>;
+
+	struct Traits
+	{
+		using Leaf = T;
+		static constexpr felt2::Dim k_dims = D;
+	};
+
+public:
+	using VecDi = felt2::VecDi<Traits::k_dims>;
+	using Leaf = Traits::Leaf;
+	using Child = convfelt::FilterTD<Leaf, Traits::k_dims>;
+	using ChildrenGrid = Felt::Impl::ByRef<Child, Traits::k_dims, is_device_shared>;
+
+private:
+	using SizeImpl = felt2::components::Size<Traits>;
+	using ChildrenSizeImpl = felt2::components::ChildrenSize<Traits, SizeImpl>;
+	using StreamImpl = felt2::components::Stream;
+	using DataImpl = std::conditional_t<
+		is_device_shared,
+		felt2::components::USMDataArray<Traits>,
+		felt2::components::DataArray<Traits>>;
+	using AssertBoundsImpl =
+		felt2::components::AssertBounds<Traits, StreamImpl, SizeImpl, DataImpl>;
+	using MatrixImpl = felt2::components::EigenColMajor2DMap<Traits, DataImpl, ChildrenSizeImpl>;
+
+	DataImpl m_data_impl;
+	SizeImpl const m_size_impl;
+	ChildrenSizeImpl const m_children_size_impl;
+	StreamImpl m_stream_impl{};
+	AssertBoundsImpl const m_assert_bounds_impl{m_stream_impl, m_size_impl, m_data_impl};
+	MatrixImpl m_matrix_impl{m_data_impl, m_children_size_impl};
+
+	ChildrenGrid m_children;
+
+public:
+	struct scoped_stream_t
+	{
+#ifdef SYCL_DEVICE_ONLY
+		scoped_stream_t(This & parent, StreamImpl::StreamType * stream)
+			: m_parent{parent}, m_prev_stream{&m_parent.get_stream()}
+		{
+			m_parent.set_stream(stream);
+			m_parent.children().set_stream(stream);
+			for (auto & child : convfelt::iter::val(m_parent.children())) child.set_stream(stream);
+		}
+
+		~scoped_stream_t()
+		{
+			m_parent.set_stream(m_prev_stream);
+			m_parent.children().set_stream(m_prev_stream);
+			for (auto & child : convfelt::iter::val(m_parent.children()))
+				child.set_stream(m_prev_stream);
+		}
+
+	private:
+		This & m_parent;
+		StreamImpl::StreamType * m_prev_stream;
+#endif
+	};
+
+	scoped_stream_t scoped_stream([[maybe_unused]] sycl::stream * stream)
+	{
+#ifdef SYCL_DEVICE_ONLY
+		return {*this, stream};
+#else
+		return {};
+#endif
+	};
+
+	ConvGridTD(const VecDi & size_, const Felt::VecDi<D - 1> & child_window_)
+		: ConvGridTD{size_, calc_child_size(child_window_, size_), {0, 0, 0}}
+	{
+	}
+
+	ConvGridTD(const VecDi & size_, const VecDi & child_size_)
+		: ConvGridTD{size_, child_size_, {0, 0, 0}}
+	{
+	}
+
+	ConvGridTD(
+		const VecDi & size_,
+		const Felt::VecDi<D - 1> & child_window_,
+		sycl::context const & context,
+		sycl::device const & device)
+		requires(is_device_shared)
+		: m_data_impl{{context, device}},
+		  m_size_impl{size_, {0, 0, 0}},
+		  m_children_size_impl{m_size_impl, calc_child_size(child_window_, m_size_impl.size())},
+		  m_children{
+			  m_children_size_impl.children_size(),
+			  VecDi::Zero(),
+			  Child{{VecDi::Zero(), VecDi::Zero()}},
+			  context,
+			  device}
+	{
+		initialise();
+	}
+
+	ConvGridTD(const VecDi & size_, const VecDi & child_size_, const VecDi & offset_)
+		requires(!is_device_shared)
+		: m_size_impl{size_, offset_},
+		  m_children_size_impl{m_size_impl, child_size_},
+		  m_children{
+			  m_children_size_impl.children_size(),
+			  VecDi::Zero(),
+			  Child{{VecDi::Zero(), VecDi::Zero()}}}
+	{
+		initialise();
+	}
+
+	const ChildrenGrid & children() const noexcept
+	{
+		return m_children;
+	}
+
+	ChildrenGrid & children() noexcept
+	{
+		return m_children;
+	}
+
+	decltype(auto) data(auto &&... args) noexcept
+	{
+		return m_data_impl.data(std::forward<decltype(args)>(args)...);
+	}
+	decltype(auto) data(auto &&... args) const noexcept
+	{
+		return m_data_impl.data(std::forward<decltype(args)>(args)...);
+	}
+	decltype(auto) offset(auto &&... args) const noexcept
+	{
+		return m_size_impl.offset(std::forward<decltype(args)>(args)...);
+	}
+	decltype(auto) size(auto &&... args) const noexcept
+	{
+		return m_size_impl.size(std::forward<decltype(args)>(args)...);
+	}
+	decltype(auto) child_size(auto &&... args) const noexcept
+	{
+		return m_children_size_impl.child_size(std::forward<decltype(args)>(args)...);
+	}
+	decltype(auto) inside(auto &&... args) const noexcept
+	{
+		return m_size_impl.inside(std::forward<decltype(args)>(args)...);
+	}
+	decltype(auto) matrix(auto &&... args) const noexcept
+	{
+		return m_matrix_impl.matrix(std::forward<decltype(args)>(args)...);
+	}
+	decltype(auto) matrix(auto &&... args) noexcept
+	{
+		return m_matrix_impl.matrix(std::forward<decltype(args)>(args)...);
+	}
+	decltype(auto) get_stream(auto &&... args) const noexcept
+	{
+		return m_stream_impl.get_stream(std::forward<decltype(args)>(args)...);
+	}
+	decltype(auto) get_stream(auto &&... args) noexcept
+	{
+		return m_stream_impl.get_stream(std::forward<decltype(args)>(args)...);
+	}
+	decltype(auto) set_stream(auto &&... args) noexcept
+	{
+		return m_stream_impl.set_stream(std::forward<decltype(args)>(args)...);
+	}
+
+private:
+	void initialise()
+	{
+		assert(
+			m_children_size_impl.child_size()(m_children_size_impl.child_size().size() - 1) ==
+				size()(size().size() - 1) &&
+			"Depth of children must be same as depth of parent");
+
+		Felt::Vec2u const matrix_size{
+			m_children_size_impl.num_elems_per_child(), m_children_size_impl.num_children()};
+
+		m_data_impl.data().resize(matrix_size.prod());
+		std::span const all_data{m_data_impl.data()};
+
+		felt2::PosIdx const num_child_idxs = m_children_size_impl.num_elems_per_child();
+
+		for (auto const & [idx, child] : convfelt::iter::idx_and_val(m_children))
+		{
+			child.data() = all_data.subspan(idx * num_child_idxs, num_child_idxs);
+		}
+
+		m_children_size_impl.resize_children(m_children);
+	}
+
+	VecDi calc_child_size(const Felt::VecDi<D - 1> & window_, const VecDi & size_)
+	{
+		VecDi child_size_;
+		child_size_ << window_, size_(size_.size() - 1);
+		return child_size_;
+	}
+};
+
+using ConvGrid = ConvGridTD<convfelt::Scalar, 3>;
 }  // namespace convfelt
 
 namespace Felt::Impl
 {
-template <typename T, Felt::Dim D, template <typename> class A>
-struct Traits<convfelt::ConvGridTD<T, D, A>>
+template <typename T, Felt::Dim D, bool is_device_shared>
+struct Traits<convfelt::ConvGridTD<T, D, is_device_shared>>
 {
 	/// Single index stored in each grid node.
 	using Leaf = T;
-	using Allocator = A<T>;
-	using DataArray = std::vector<Leaf, Allocator>;
 	/// Dimension of grid.
 	static constexpr Dim t_dims = D;
-
-	using Child = convfelt::FilterTD<T, D>;
-	using Children = Felt::Impl::ByRef<Child, D, !std::is_same_v<A<T>, std::allocator<T>>>;
 };
 
 template <typename T, Felt::Dim D>
 struct Traits<convfelt::FilterTD<T, D>>
 {
 	using Leaf = T;
-	using DataArray = std::span<Leaf>;
 	static constexpr Dim t_dims = D;
 };
 
