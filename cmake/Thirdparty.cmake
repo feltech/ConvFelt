@@ -19,7 +19,7 @@ endif ()
 # SyCL support
 
 if (NOT HIPSYCL_TARGETS)
-	set(HIPSYCL_TARGETS omp,cuda.integrated-multipass:sm_70 CACHE STRING
+	set(HIPSYCL_TARGETS omp;cuda.integrated-multipass:sm_70 CACHE STRING
 		"hipSycl compilation flow targets")
 endif ()
 
