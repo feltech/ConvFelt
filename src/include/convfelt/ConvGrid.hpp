@@ -4,15 +4,14 @@
 
 #include <sycl/sycl.hpp>
 
-#include <Felt/Impl/Grid.hpp>
-
 #include "assert_compat.hpp"
+
+#include "felt2/typedefs.hpp"
 
 #include "felt2/components/core.hpp"
 #include "felt2/components/eigen.hpp"
 #include "felt2/components/sycl.hpp"
 
-#include "Numeric.hpp"
 #include "iter.hpp"
 
 /**
@@ -36,9 +35,128 @@
 namespace convfelt
 {
 
-template <typename T, Felt::Dim D>
-using InputGridTD = Felt::Impl::Grid::Simple<T, D>;
-using InputGrid = InputGridTD<convfelt::Scalar, 3>;
+template <typename T, felt2::Dim D, bool is_device_shared = false>
+class ByValue
+{
+public:
+	using This = ByValue<T, D>;
+
+	struct Traits
+	{
+		using Leaf = T;
+		static constexpr felt2::Dim k_dims = D;
+	};
+
+	using VecDi = felt2::VecDi<Traits::k_dims>;
+	using Leaf = Traits::Leaf;
+
+	using SizeImpl = felt2::components::Size<Traits>;
+	using StreamImpl = felt2::components::Stream;
+	using DataImpl = std::conditional_t<
+		is_device_shared,
+		felt2::components::USMDataArray<Traits>,
+		felt2::components::DataArray<Traits>>;
+	using AssertBoundsImpl =
+		felt2::components::AssertBounds<Traits, StreamImpl, SizeImpl, DataImpl>;
+	using AccessImpl =
+		felt2::components::AccessByValue<Traits, SizeImpl, DataImpl, AssertBoundsImpl>;
+	using ActivateImpl = felt2::components::Activate<Traits, SizeImpl, DataImpl, StreamImpl>;
+	using MatrixImpl = felt2::components::EigenMap<Traits, DataImpl>;
+
+private:
+	SizeImpl const m_size_impl;
+	StreamImpl m_stream_impl{};
+	AssertBoundsImpl const m_assert_bounds_impl{m_stream_impl, m_size_impl, m_data_impl};
+	AccessImpl m_access_impl{m_size_impl, m_data_impl, m_assert_bounds_impl};
+	DataImpl m_data_impl;
+	ActivateImpl m_activate_impl;
+	MatrixImpl const m_matrix_impl{m_data_impl};
+
+public:
+	ByValue(
+		const VecDi & size_,
+		const VecDi & offset_,
+		Leaf background_,
+		sycl::context context,
+		sycl::device device)
+		requires(is_device_shared)
+		: m_size_impl{size_, offset_},
+		  m_data_impl{{std::move(context), std::move(device)}},
+		  m_activate_impl{m_size_impl, m_data_impl, m_stream_impl, background_}
+	{
+		m_activate_impl.activate();
+	}
+
+	ByValue(const VecDi & size_, const VecDi & offset_, Leaf background_)
+		requires(!is_device_shared)
+		: m_size_impl{size_, offset_},
+		  m_data_impl{},
+		  m_activate_impl{m_size_impl, m_data_impl, m_stream_impl, background_}
+	{
+		m_activate_impl.activate();
+	}
+
+	decltype(auto) data(auto &&... args) noexcept
+	{
+		return m_data_impl.data(std::forward<decltype(args)>(args)...);
+	}
+	decltype(auto) data(auto &&... args) const noexcept
+	{
+		return m_data_impl.data(std::forward<decltype(args)>(args)...);
+	}
+	decltype(auto) index(auto &&... args) const noexcept
+	{
+		return m_size_impl.index(std::forward<decltype(args)>(args)...);
+	}
+	decltype(auto) get(VecDi const & pos) noexcept
+	{
+		return m_access_impl.get(pos);
+	}
+	decltype(auto) get(VecDi const & pos) const noexcept
+	{
+		return m_access_impl.get(pos);
+	}
+	decltype(auto) get(auto &&... args) noexcept
+	{
+		return m_access_impl.get(std::forward<decltype(args)>(args)...);
+	}
+	decltype(auto) get(auto &&... args) const noexcept
+	{
+		return m_access_impl.get(std::forward<decltype(args)>(args)...);
+	}
+	decltype(auto) set(auto &&... args) noexcept
+	{
+		return m_access_impl.set(std::forward<decltype(args)>(args)...);
+	}
+	decltype(auto) offset(auto &&... args) const noexcept
+	{
+		return m_size_impl.offset(std::forward<decltype(args)>(args)...);
+	}
+	decltype(auto) size(auto &&... args) const noexcept
+	{
+		return m_size_impl.size(std::forward<decltype(args)>(args)...);
+	}
+	decltype(auto) inside(auto &&... args) const noexcept
+	{
+		return m_size_impl.inside(std::forward<decltype(args)>(args)...);
+	}
+	decltype(auto) array(auto &&... args) const noexcept
+	{
+		return m_matrix_impl.array(std::forward<decltype(args)>(args)...);
+	}
+	decltype(auto) matrix(auto &&... args) const noexcept
+	{
+		return m_matrix_impl.matrix(std::forward<decltype(args)>(args)...);
+	}
+	decltype(auto) set_stream(auto &&... args) noexcept
+	{
+		return m_stream_impl.set_stream(std::forward<decltype(args)>(args)...);
+	}
+};
+
+template <typename T, felt2::Dim D>
+using InputGridTD = ByValue<T, D>;
+using InputGrid = InputGridTD<felt2::Scalar, 3>;
 
 template <typename T, felt2::Dim D, bool is_device_shared = false>
 class ByRef
@@ -140,7 +258,7 @@ public:
 	}
 };
 
-template <typename T, Felt::Dim D>
+template <typename T, felt2::Dim D>
 class FilterTD
 {
 public:
@@ -275,9 +393,9 @@ public:
 	}
 };
 
-using Filter = FilterTD<convfelt::Scalar, 3>;
+using Filter = FilterTD<felt2::Scalar, 3>;
 
-template <typename T, Felt::Dim D, bool is_device_shared = false>
+template <typename T, felt2::Dim D, bool is_device_shared = false>
 class ConvGridTD
 {
 public:
@@ -350,7 +468,7 @@ public:
 #endif
 	};
 
-	ConvGridTD(const VecDi & size_, const Felt::VecDi<D - 1> & child_window_)
+	ConvGridTD(const VecDi & size_, const felt2::VecDi<D - 1> & child_window_)
 		: ConvGridTD{size_, calc_child_size(child_window_, size_), {0, 0, 0}}
 	{
 	}
@@ -362,7 +480,7 @@ public:
 
 	ConvGridTD(
 		const VecDi & size_,
-		const Felt::VecDi<D - 1> & child_window_,
+		const felt2::VecDi<D - 1> & child_window_,
 		sycl::context const & context,
 		sycl::device const & device)
 		requires(is_device_shared)
@@ -454,7 +572,7 @@ private:
 				size()(size().size() - 1) &&
 			"Depth of children must be same as depth of parent");
 
-		Felt::Vec2u const matrix_size{
+		felt2::Vec2u const matrix_size{
 			m_children_size_impl.num_elems_per_child(), m_children_size_impl.num_children()};
 
 		m_data_impl.data().resize(matrix_size.prod());
@@ -470,7 +588,7 @@ private:
 		}
 	}
 
-	VecDi calc_child_size(const Felt::VecDi<D - 1> & window_, const VecDi & size_)
+	VecDi calc_child_size(const felt2::VecDi<D - 1> & window_, const VecDi & size_)
 	{
 		VecDi child_size_;
 		child_size_ << window_, size_(size_.size() - 1);
@@ -478,5 +596,5 @@ private:
 	}
 };
 
-using ConvGrid = ConvGridTD<convfelt::Scalar, 3>;
+using ConvGrid = ConvGridTD<felt2::Scalar, 3>;
 }  // namespace convfelt

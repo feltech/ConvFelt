@@ -9,6 +9,7 @@ using span = std::span<Args...>;
 }  // namespace sycl
 #include <oneapi/mkl.hpp>
 
+
 // Eigen
 //   * OpenSYCL (hipSYCL) not supported because missing `isinf` and `isfinite` builtins. So must
 //     #undef SYCL_DEVICE_ONLY (which probably shouldn't be set by OpenSYCL, but it is).
@@ -19,6 +20,8 @@ using span = std::span<Args...>;
 #define was_SYCL_DEVICE_ONLY SYCL_DEVICE_ONLY
 #undef SYCL_DEVICE_ONLY
 #endif
+// Ensure EIGEN_DEFAULT_IO_FORMAT is defined early
+#include <convfelt/felt2/typedefs.hpp>
 #include <Eigen/Eigen>
 #ifdef was_SYCL_DEVICE_ONLY
 #define SYCL_DEVICE_ONLY was_SYCL_DEVICE_ONLY
@@ -56,7 +59,7 @@ SCENARIO("Using OpenImageIO with cppcoro and loading into Felt grid")
 	GIVEN("a simple monochrome image file")
 	{
 		static constexpr std::string_view file_path = CONVFELT_TEST_RESOURCE_DIR "/plus.png";
-		using Pixel = Felt::VecDT<float, 3>;
+		using Pixel = felt2::VecDT<float, 3>;
 
 		WHEN("image file is loaded")
 		{
@@ -196,33 +199,33 @@ SCENARIO("Input/output ConvGrids")
 		{
 			using FilterGrid = convfelt::ConvGrid;
 
-			const Felt::NodeIdx filter_stride = 2;
+			const felt2::NodeIdx filter_stride = 2;
 
 			FilterGrid filter_input_grid = [&image_grid, filter_stride]
 			{
-				Felt::Vec2i const filter_input_window{4, 4};
-				Felt::Vec3i const filter_input_shape{4, 4, 3};
+				felt2::Vec2i const filter_input_window{4, 4};
+				felt2::Vec3i const filter_input_shape{4, 4, 3};
 
-				Felt::Vec3i num_filters = (image_grid.size() - filter_input_shape);
-				num_filters = num_filters / filter_stride + Felt::Vec3i::Ones();
-				Felt::Vec3i const num_connections =
+				felt2::Vec3i num_filters = (image_grid.size() - filter_input_shape);
+				num_filters = num_filters / filter_stride + felt2::Vec3i::Ones();
+				felt2::Vec3i const num_connections =
 					(num_filters.array() * filter_input_shape.array()).matrix();
 
 				return FilterGrid{num_connections, filter_input_window};
 			}();
-			const Felt::Vec3i filter_input_shape = filter_input_grid.child_size();
+			const felt2::Vec3i filter_input_shape = filter_input_grid.child_size();
 
 			for (auto const & [filter_pos_idx, filter] :
 				 convfelt::iter::idx_and_val(filter_input_grid.children()))
 			{
-				const Felt::Vec3i input_pos_start =
+				const felt2::Vec3i input_pos_start =
 					filter_input_grid.children().index(filter_pos_idx) * filter_stride;
 				(void)input_pos_start;
 
-				for (Felt::PosIdx local_pos_idx : convfelt::iter::pos_idx(filter))
+				for (felt2::PosIdx local_pos_idx : convfelt::iter::pos_idx(filter))
 				{
-					const Felt::Vec3i input_pos =
-						input_pos_start + Felt::index<3>(local_pos_idx, filter.size());
+					const felt2::Vec3i input_pos =
+						input_pos_start + felt2::index<3>(local_pos_idx, filter.size());
 
 					filter.set(local_pos_idx, image_grid.get(input_pos));
 				}
@@ -250,10 +253,10 @@ SCENARIO("Input/output ConvGrids")
 						for (auto const & [pos_idx, pos] :
 							 convfelt::iter::idx_and_pos(filter_input))
 						{
-							Felt::Vec3i const filter_image_start_pos =
+							felt2::Vec3i const filter_image_start_pos =
 								filter_stride * (pos.array() / filter_input_shape.array()).matrix();
 
-							Felt::Vec3i const image_grid_pos = pos - filter_image_start_pos;
+							felt2::Vec3i const image_grid_pos = pos - filter_image_start_pos;
 
 							CAPTURE(pos);
 							CAPTURE(image_grid_pos);
@@ -269,8 +272,8 @@ SCENARIO("Input/output ConvGrids")
 
 			AND_GIVEN("an output grid and weight matrix")
 			{
-				Felt::Vec3i const filter_output_shape{2, 2, 4};
-				Felt::Vec3i const filter_output_grid_size =
+				felt2::Vec3i const filter_output_shape{2, 2, 4};
+				felt2::Vec3i const filter_output_grid_size =
 					(filter_input_grid.children().size().array() * filter_output_shape.array())
 						.matrix();
 
@@ -289,7 +292,7 @@ SCENARIO("Input/output ConvGrids")
 						convfelt::Scalar const expected =
 							filter_input_grid.children().get(filter_pos_idx).matrix().sum();
 
-						const Felt::Vec3i filter_pos =
+						const felt2::Vec3i filter_pos =
 							filter_input_grid.children().index(filter_pos_idx);
 						CAPTURE(filter_pos);
 
@@ -391,7 +394,7 @@ SCENARIO("SyCL with ConvGrid")
 		using ConvGrid = convfelt::ConvGridTD<float, 3, true>;
 
 		auto const pgrid = convfelt::make_unique_sycl<ConvGrid>(
-			dev, ctx, Felt::Vec3i{4, 4, 3}, Felt::Vec2i{2, 2}, ctx, dev);
+			dev, ctx, felt2::Vec3i{4, 4, 3}, felt2::Vec2i{2, 2}, ctx, dev);
 
 		std::fill(pgrid->data().begin(), pgrid->data().end(), 3);
 		CHECK(pgrid->children().data().size() > 1);
@@ -459,34 +462,34 @@ SCENARIO("Applying filter to ConvGrid")
 			// sycl::device dev{sycl::cpu_selector_v};
 			using FilterGrid = convfelt::ConvGridTD<convfelt::Scalar, 3, true>;
 
-			const Felt::NodeIdx filter_stride = 2;
+			const felt2::NodeIdx filter_stride = 2;
 
 			auto filter_input_grid = [&]
 			{
-				Felt::Vec2i const filter_input_window{4, 4};
-				Felt::Vec3i const filter_input_shape{4, 4, 3};
+				felt2::Vec2i const filter_input_window{4, 4};
+				felt2::Vec3i const filter_input_shape{4, 4, 3};
 
-				Felt::Vec3i num_filters =
-					Felt::Vec3i::Ones() + (image_grid.size() - filter_input_shape) / filter_stride;
-				Felt::Vec3i const num_connections =
+				felt2::Vec3i num_filters =
+					felt2::Vec3i::Ones() + (image_grid.size() - filter_input_shape) / filter_stride;
+				felt2::Vec3i const num_connections =
 					(num_filters.array() * filter_input_shape.array()).matrix();
 
 				return convfelt::make_unique_sycl<FilterGrid>(
 					dev, ctx, num_connections, filter_input_window, ctx, dev);
 			}();
-			const Felt::Vec3i filter_input_shape = filter_input_grid->child_size();
+			const felt2::Vec3i filter_input_shape = filter_input_grid->child_size();
 
 			for (auto const & [filter_pos_idx, filter] :
 				 convfelt::iter::idx_and_val(filter_input_grid->children()))
 			{
-				const Felt::Vec3i input_pos_start =
+				const felt2::Vec3i input_pos_start =
 					filter_input_grid->children().index(filter_pos_idx) * filter_stride;
 				(void)input_pos_start;
 
-				for (Felt::PosIdx local_pos_idx : convfelt::iter::pos_idx(filter))
+				for (felt2::PosIdx local_pos_idx : convfelt::iter::pos_idx(filter))
 				{
-					const Felt::Vec3i input_pos =
-						input_pos_start + Felt::index<3>(local_pos_idx, filter.size());
+					const felt2::Vec3i input_pos =
+						input_pos_start + felt2::index<3>(local_pos_idx, filter.size());
 
 					filter.set(local_pos_idx, image_grid.get(input_pos));
 				}
@@ -494,9 +497,9 @@ SCENARIO("Applying filter to ConvGrid")
 
 			AND_GIVEN("an output grid and weight matrix")
 			{
-				Felt::Vec2i const filter_output_window{2, 2};
-				Felt::Vec3i const filter_output_shape{2, 2, 4};
-				Felt::Vec3i const filter_output_grid_size =
+				felt2::Vec2i const filter_output_window{2, 2};
+				felt2::Vec3i const filter_output_shape{2, 2, 4};
+				felt2::Vec3i const filter_output_grid_size =
 					(filter_input_grid->children().size().array() * filter_output_shape.array())
 						.matrix();
 
@@ -527,7 +530,7 @@ SCENARIO("Applying filter to ConvGrid")
 					for (auto const & filter_pos_idx :
 						 convfelt::iter::pos_idx(filter_output_grid->children()))
 					{
-						const Felt::Vec3i filter_pos =
+						const felt2::Vec3i filter_pos =
 							filter_input_grid->children().index(filter_pos_idx);
 						CAPTURE(filter_pos);
 

@@ -2,8 +2,8 @@
 #include <concepts>
 #include <cstddef>
 
-#include <Felt/Impl/Common.hpp>
-#include <Felt/Impl/Util.hpp>
+#include "felt2/typedefs.hpp"
+#include "felt2/index.hpp"
 
 #include <cppcoro/generator.hpp>
 #include <range/v3/view/enumerate.hpp>
@@ -16,10 +16,10 @@ namespace concepts
 namespace helpers
 {
 template <class G>
-constexpr Felt::Dim DimFor = std::decay_t<G>::Traits::k_dims;
+constexpr felt2::Dim DimFor = std::decay_t<G>::Traits::k_dims;
 
 template <class G>
-using VecDiFor = Felt::VecDi<DimFor<G>>;
+using VecDiFor = felt2::VecDi<DimFor<G>>;
 }  // namespace helpers
 
 namespace detail
@@ -37,7 +37,7 @@ template <typename T>
 concept GridWithData = requires(T v)
 {
 	requires Grid<T>;
-	{v.data().size()} -> std::same_as<Felt::PosIdx>;
+	{v.data().size()} -> std::same_as<felt2::PosIdx>;
 };
 // clang-format on
 }  // namespace detail
@@ -71,12 +71,12 @@ static inline auto pos(concepts::Grid auto & grid)
 {
 	static constexpr auto D = concepts::helpers::DimFor<decltype(grid)>;
 
-	for (auto pos_idx : idx(Felt::PosIdx(grid.size().prod())))
-		co_yield grid.offset() + Felt::index<D>(pos_idx, grid.size());
+	for (auto pos_idx : idx(felt2::PosIdx(grid.size().prod())))
+		co_yield grid.offset() + felt2::index<D>(pos_idx, grid.size());
 };
 
 template <class G>
-using IdxAndPos = std::tuple<Felt::PosIdx, concepts::helpers::VecDiFor<G>>;
+using IdxAndPos = std::tuple<felt2::PosIdx, concepts::helpers::VecDiFor<G>>;
 
 static inline auto idx_and_pos(concepts::Grid auto & grid)
 	-> cppcoro::generator<IdxAndPos<decltype(grid)>>
@@ -84,9 +84,9 @@ static inline auto idx_and_pos(concepts::Grid auto & grid)
 	static constexpr auto D = concepts::helpers::DimFor<decltype(grid)>;
 	using VecDi = concepts::helpers::VecDiFor<decltype(grid)>;
 
-	for (auto const pos_idx : idx(Felt::PosIdx(grid.size().prod())))
+	for (auto const pos_idx : idx(felt2::PosIdx(grid.size().prod())))
 	{
-		VecDi const pos = grid.offset() + Felt::index<D>(pos_idx, grid.size());
+		VecDi const pos = grid.offset() + felt2::index<D>(pos_idx, grid.size());
 		co_yield {pos_idx, pos};
 	}
 };

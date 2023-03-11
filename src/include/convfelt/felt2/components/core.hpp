@@ -5,8 +5,9 @@
 #include <type_traits>
 #include <vector>
 
-#include "../index.hpp"
 #include "../typedefs.hpp"
+
+#include "../index.hpp"
 
 namespace felt2::components
 {
@@ -477,7 +478,7 @@ struct AccessByRef
 	/// Type of data to store in grid nodes.
 	using Leaf = typename Traits::Leaf;
 	/// D-dimensional signed integer vector.
-	using VecDi = Felt::VecDi<k_dims>;
+	using VecDi = felt2::VecDi<k_dims>;
 
 	Size const & m_size_impl;
 	Data & m_data_impl;
@@ -554,7 +555,7 @@ struct AccessByValue
 	/// Type of data to store in grid nodes.
 	using Leaf = typename Traits::Leaf;
 	/// D-dimensional signed integer vector.
-	using VecDi = Felt::VecDi<k_dims>;
+	using VecDi = felt2::VecDi<k_dims>;
 
 	Size const & m_size_impl;
 	Data & m_data_impl;
