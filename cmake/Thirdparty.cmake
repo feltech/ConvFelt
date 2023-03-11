@@ -210,12 +210,6 @@ find_package(range-v3 REQUIRED)
 
 
 #------------------------------------------------------------
-# (My) Felt library
-
-CPMAddPackage(gh:feltech/Felt@3.2)
-
-
-#------------------------------------------------------------
 # Testing libraries
 
 if (CONVFELT_ENABLE_TESTS)

@@ -20,8 +20,7 @@ target_link_system_libraries(convfelt INTERFACE
 	range-v3::range-v3
 	Eigen3::Eigen
 	cppcoro::cppcoro
-	hipSYCL::hipSYCL-rt
-	felt)
+	hipSYCL::hipSYCL-rt)
 
 target_compile_definitions(
 	convfelt
