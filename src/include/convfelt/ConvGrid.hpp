@@ -644,13 +644,14 @@ private:
 		std::span const all_data{m_data_impl.data()};
 
 		felt2::PosIdx const num_child_idxs = m_children_size_impl.num_elems_per_child();
+		m_children_size_impl.resize_children(m_children);
 
 		for (auto const & [idx, child] : convfelt::iter::idx_and_val(m_children))
 		{
-			child.data() = all_data.subspan(idx * num_child_idxs, num_child_idxs);
+			felt2::PosIdx const num_used_child_idxs =
+				static_cast<felt2::PosIdx>(child.size().prod());
+			child.data() = all_data.subspan(idx * num_child_idxs, num_used_child_idxs);
 		}
-
-		m_children_size_impl.resize_children(m_children);
 	}
 
 	VecDi calc_child_size(const Felt::VecDi<D - 1> & window_, const VecDi & size_)
