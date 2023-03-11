@@ -37,6 +37,12 @@ if (CMAKE_CXX_COMPILER_ID STREQUAL GNU)
 	)
 endif ()
 
+target_compile_options(
+	convfelt.test.unit
+	PRIVATE
+	-ftemplate-backtrace-limit=0
+)
+
 target_compile_definitions(
 	convfelt.test.unit
 	PRIVATE

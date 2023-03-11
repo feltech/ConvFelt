@@ -11,8 +11,11 @@
 #include <Felt/Impl/Util.hpp>
 
 #include "assert_compat.hpp"
+
 #include "felt2/components/core.hpp"
+#include "felt2/components/eigen.hpp"
 #include "felt2/components/sycl.hpp"
+
 #include "Numeric.hpp"
 #include "iter.hpp"
 
@@ -149,9 +152,9 @@ class AssertBounds
 
 protected:
 #ifdef SYCL_DEVICE_ONLY
-	using Stream = sycl::stream*;
+	using Stream = sycl::stream *;
 #else
-	using Stream = std::ostream*;
+	using Stream = std::ostream *;
 #endif
 
 	[[nodiscard]] Stream get_stream() const
@@ -203,10 +206,10 @@ private:
 #ifdef SYCL_DEVICE_ONLY
 	Stream m_stream{nullptr};
 #else
-	Stream  m_stream{&std::cerr};
+	Stream m_stream{&std::cerr};
 #endif
 };
-}	// namespace Grid
+}  // namespace Grid
 }  // namespace Mixin
 
 template <typename T, Dim D, bool is_device_shared = false>
@@ -249,7 +252,7 @@ public:
 		Leaf background_,
 		sycl::context context,
 		sycl::device device)
-		requires (is_device_shared)
+		requires(is_device_shared)
 		: m_size_impl{size_, offset_},
 		  m_data_impl{{std::move(context), std::move(device)}},
 		  m_activate_impl{m_size_impl, m_data_impl, m_stream_impl, background_}
@@ -258,13 +261,14 @@ public:
 	}
 
 	ByRef(const VecDi & size_, const VecDi & offset_, Leaf background_)
-		requires (!is_device_shared)
+		requires(!is_device_shared)
 		: m_size_impl{size_, offset_},
 		  m_data_impl{},
 		  m_activate_impl{m_size_impl, m_data_impl, m_stream_impl, background_}
 	{
 		m_activate_impl.activate();
 	}
+
 	decltype(auto) data(auto &&... args) noexcept
 	{
 		return m_data_impl.data(std::forward<decltype(args)>(args)...);
@@ -277,11 +281,11 @@ public:
 	{
 		return m_size_impl.index(std::forward<decltype(args)>(args)...);
 	}
-	decltype(auto) get(VecDi const& pos) noexcept
+	decltype(auto) get(VecDi const & pos) noexcept
 	{
 		return m_access_impl.get(pos);
 	}
-	decltype(auto) get(VecDi const& pos) const noexcept
+	decltype(auto) get(VecDi const & pos) const noexcept
 	{
 		return m_access_impl.get(pos);
 	}
@@ -345,21 +349,19 @@ public:
 	struct scoped_stream_t
 	{
 #ifdef SYCL_DEVICE_ONLY
-		scoped_stream_t(
-			This & parent, AssertBoundsImpl::Stream stream)
+		scoped_stream_t(This & parent, AssertBoundsImpl::Stream stream)
 			: m_parent{parent}, m_prev_stream{m_parent.get_stream()}
 		{
 			m_parent.set_stream(stream);
 			m_parent.children().set_stream(stream);
-			for (auto& child : convfelt::iter::val(m_parent.children()))
-				child.set_stream(stream);
+			for (auto & child : convfelt::iter::val(m_parent.children())) child.set_stream(stream);
 		}
 
 		~scoped_stream_t()
 		{
 			m_parent.set_stream(m_prev_stream);
 			m_parent.children().set_stream(m_prev_stream);
-			for (auto& child : convfelt::iter::val(m_parent.children()))
+			for (auto & child : convfelt::iter::val(m_parent.children()))
 				child.set_stream(m_prev_stream);
 		}
 
@@ -397,7 +399,12 @@ public:
 		: DataImpl{context, device},
 		  SizeImpl{size_, {0, 0, 0}},
 		  ChildrenImpl{
-			  size_, {0, 0, 0}, calc_child_size(child_size_, size_), Child{}, context, device},
+			  size_,
+			  {0, 0, 0},
+			  calc_child_size(child_size_, size_),
+			  Child{{VecDi ::Zero(), VecDi::Zero()}},
+			  context,
+			  device},
 		  PartitionedAsColMajorMatrixImpl{
 			  ChildrenImpl::child_size(), ChildrenImpl::children().size()}
 	{
@@ -406,7 +413,7 @@ public:
 
 	ConvGridTD(const VecDi & size_, const VecDi & child_size_, const VecDi & offset_)
 		: SizeImpl{size_, offset_},
-		  ChildrenImpl{size_, offset_, child_size_, Child{}},
+		  ChildrenImpl{size_, offset_, child_size_, Child{{VecDi ::Zero(), VecDi::Zero()}}},
 		  PartitionedAsColMajorMatrixImpl{
 			  ChildrenImpl::child_size(), ChildrenImpl::children().size()}
 	{
@@ -465,43 +472,139 @@ private:
 using ConvGrid = ConvGridTD<convfelt::Scalar, 3>;
 
 template <typename T, Felt::Dim D>
-class FilterTD : FELT_MIXINS(
-					 (FilterTD<T, D>),
-					 (Grid::Access::ByValue)(Grid::Activate)(Grid::DataSpan)(Grid::Resize)(
-						 Numeric::Snapshot)(Grid::AssertBounds),
-					 (Grid::Index))
-//{
+class FilterTD
+{
 private:
 	using This = FilterTD<T, D>;
 
-	using Traits = Felt::Impl::Traits<This>;
-	using Leaf = typename Traits::Leaf;
-
-	using AccessImpl = Felt::Impl::Mixin::Grid::Access::ByValue<This>;
-	using DataSpanImpl = Felt::Impl::Mixin::Grid::DataSpan<This>;
-	using SizeImpl = Felt::Impl::Mixin::Grid::Resize<This>;
-	using SnapshotImpl = Felt::Impl::Mixin::Numeric::Snapshot<This>;
-	using IndexImpl = Felt::Impl::Mixin::Grid::Index<This>;
-	using AssertBoundsImpl = Felt::Impl::Mixin::Grid::AssertBounds<This>;
+	struct Traits
+	{
+		using Leaf = T;
+		static constexpr felt2::Dim k_dims = D;
+	};
 
 public:
-	using typename DataSpanImpl::DataArray;
-	using typename SnapshotImpl::ArrayColMap;
-	using VecDi = Felt::VecDi<D>;
+	using VecDi = felt2::VecDi<Traits::k_dims>;
+	using Leaf = Traits::Leaf;
 
-	using AccessImpl::get;
-	using AccessImpl::index;
-	using AccessImpl::set;
-	using AssertBoundsImpl::set_stream;
-	using AssertBoundsImpl::assert_pos_bounds;
-	using AssertBoundsImpl::assert_pos_idx_bounds;
-	using DataSpanImpl::data;
-	using SizeImpl::inside;
-	using SizeImpl::offset;
-	using SizeImpl::resize;
-	using SizeImpl::size;
-	using SnapshotImpl::array;
-	using SnapshotImpl::matrix;
+	using SizeImpl = felt2::components::ResizableSize<Traits>;
+	using StreamImpl = felt2::components::Stream;
+	using DataImpl = felt2::components::DataArraySpan<Traits>;
+	using AssertBoundsImpl =
+		felt2::components::AssertBounds<Traits, StreamImpl, SizeImpl, DataImpl>;
+	using AccessImpl =
+		felt2::components::AccessByValue<Traits, SizeImpl, DataImpl, AssertBoundsImpl>;
+	using ActivateImpl = felt2::components::Activate<Traits, SizeImpl, DataImpl, StreamImpl>;
+	using EigenMapImpl = felt2::components::EigenMap<Traits, DataImpl>;
+
+	using DataArray = typename DataImpl::Array;
+	using ArrayColMap = typename EigenMapImpl::ArrayColMap;
+
+private:
+	DataImpl m_data_impl{};
+	SizeImpl m_size_impl;
+	StreamImpl m_stream_impl{};
+	AssertBoundsImpl const m_assert_bounds_impl{m_stream_impl, m_size_impl, m_data_impl};
+	AccessImpl m_access_impl{m_size_impl, m_data_impl, m_assert_bounds_impl};
+	EigenMapImpl const m_eigen_map_impl{m_data_impl};
+
+public:
+	explicit FilterTD(SizeImpl size_impl) : m_size_impl{std::move(size_impl)} {}
+
+	FilterTD(This const & other)
+		: m_data_impl{other.m_data_impl},
+		  m_size_impl{other.m_size_impl},
+		  m_stream_impl{other.m_stream_impl},
+		  m_assert_bounds_impl{m_stream_impl, m_size_impl, m_data_impl},
+		  m_access_impl{m_size_impl, m_data_impl, m_assert_bounds_impl},
+		  m_eigen_map_impl{m_data_impl}
+	{
+	}
+
+	FilterTD(This && other) noexcept
+		: m_data_impl{std::move(other.m_data_impl)},
+		  m_size_impl{std::move(other.m_size_impl)},
+		  m_stream_impl{std::move(other.m_stream_impl)},
+		  m_assert_bounds_impl{m_stream_impl, m_size_impl, m_data_impl},
+		  m_access_impl{m_size_impl, m_data_impl, m_assert_bounds_impl},
+		  m_eigen_map_impl{m_data_impl}
+	{
+	}
+
+	FilterTD & operator=(FilterTD other) noexcept
+	{
+		std::swap(*this, other);
+		return *this;
+	}
+
+	decltype(auto) data(auto &&... args) noexcept
+	{
+		return m_data_impl.data(std::forward<decltype(args)>(args)...);
+	}
+	decltype(auto) data(auto &&... args) const noexcept
+	{
+		return m_data_impl.data(std::forward<decltype(args)>(args)...);
+	}
+	decltype(auto) index(auto &&... args) const noexcept
+	{
+		return m_size_impl.index(std::forward<decltype(args)>(args)...);
+	}
+	decltype(auto) get(VecDi const & pos) noexcept
+	{
+		return m_access_impl.get(pos);
+	}
+	decltype(auto) get(VecDi const & pos) const noexcept
+	{
+		return m_access_impl.get(pos);
+	}
+	decltype(auto) get(auto &&... args) noexcept
+	{
+		return m_access_impl.get(std::forward<decltype(args)>(args)...);
+	}
+	decltype(auto) get(auto &&... args) const noexcept
+	{
+		return m_access_impl.get(std::forward<decltype(args)>(args)...);
+	}
+	decltype(auto) set(auto &&... args) noexcept
+	{
+		return m_access_impl.set(std::forward<decltype(args)>(args)...);
+	}
+	decltype(auto) offset(auto &&... args) const noexcept
+	{
+		return m_size_impl.offset(std::forward<decltype(args)>(args)...);
+	}
+	decltype(auto) size(auto &&... args) const noexcept
+	{
+		return m_size_impl.size(std::forward<decltype(args)>(args)...);
+	}
+	decltype(auto) resize(auto &&... args) noexcept
+	{
+		return m_size_impl.resize(std::forward<decltype(args)>(args)...);
+	}
+	decltype(auto) inside(auto &&... args) const noexcept
+	{
+		return m_size_impl.inside(std::forward<decltype(args)>(args)...);
+	}
+	decltype(auto) array(auto &&... args) const noexcept
+	{
+		return m_eigen_map_impl.array(std::forward<decltype(args)>(args)...);
+	}
+	decltype(auto) matrix(auto &&... args) const noexcept
+	{
+		return m_eigen_map_impl.matrix(std::forward<decltype(args)>(args)...);
+	}
+	decltype(auto) set_stream(auto &&... args) noexcept
+	{
+		return m_stream_impl.set_stream(std::forward<decltype(args)>(args)...);
+	}
+	decltype(auto) assert_pos_bounds(auto &&... args) const noexcept
+	{
+		return m_assert_bounds_impl.assert_pos_bounds(std::forward<decltype(args)>(args)...);
+	}
+	decltype(auto) assert_pos_idx_bounds(auto &&... args) const noexcept
+	{
+		return m_assert_bounds_impl.assert_pos_idx_bounds(std::forward<decltype(args)>(args)...);
+	}
 };
 
 using Filter = FilterTD<convfelt::Scalar, 3>;

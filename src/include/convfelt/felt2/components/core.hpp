@@ -1,7 +1,9 @@
 // Copyright 2023 David Feltell
 // SPDX-License-Identifier: MIT
 #pragma once
+#include <span>
 #include <type_traits>
+#include <vector>
 
 #include "../index.hpp"
 #include "../typedefs.hpp"
@@ -52,10 +54,14 @@ concept IsData = requires(T obj) {
 					 {
 						 obj.size()
 					 } -> std::convertible_to<PosIdx>;
-					 {
-						 obj.resize(std::declval<PosIdx>())
-					 };
 				 };
+
+template <class T>
+concept IsResizeable = requires(T obj) {
+						   {
+							   obj.resize(std::declval<PosIdx>())
+						   };
+					   };
 
 template <class T>
 concept HasDataType = IsData<typename T::DataArray>;
@@ -118,7 +124,7 @@ concept HasAssertBounds =
 	};
 
 template <typename T, Dim D>
-void format_pos(IsStream auto& stream, VecDT<T, D> const & pos)
+void format_pos(IsStream auto & stream, VecDT<T, D> const & pos)
 {
 	stream << "(" << pos(0);
 	for (Dim axis = 1; axis < pos.size(); ++axis) stream << ", " << pos(axis);
@@ -146,14 +152,103 @@ struct Size
 		ar(m_size, m_offset, m_offset_plus_size);
 	}
 
-	const VecDi & size() const
+	const VecDi & size() const noexcept
 	{
 		return m_size;
 	}
 
-	const VecDi & offset() const
+	const VecDi & offset() const noexcept
 	{
 		return m_offset;
+	}
+
+	/**
+	 * Get index in data array of position vector.
+	 *
+	 * The grid is packed in a 1D array, so this method is required to
+	 * get the index in that array of the D-dimensional position.
+	 *
+	 * @param pos_ position in grid to query.
+	 * @return index in internal data array of this grid position.
+	 */
+	PosIdx index(const VecDi & pos_) const noexcept
+	{
+		return felt2::index<k_dims>(pos_, size(), offset());
+	}
+
+	/**
+	 * Get position of index.
+	 *
+	 * Given an index in the 1D grid data array, calculate the position vector that it pertains to.
+	 *
+	 * @param idx_ index in internal data array to query.
+	 * @return the position in the grid represented in the data array at given index.
+	 */
+	VecDi index(const PosIdx idx_) const noexcept
+	{
+		return felt2::index<k_dims>(idx_, size(), offset());
+	}
+
+	/**
+	 * Test if a position is inside the grid bounds.
+	 *
+	 * @tparam Pos the type of position vector (i.e. float vs. int).
+	 * @param pos_ position in grid to query.
+	 * @return true if position lies inside the grid, false otherwise.
+	 */
+	template <typename T>
+	bool inside(const VecDT<T, k_dims> & pos_) const noexcept
+	{
+		return felt2::inside(pos_, m_offset, m_offset_plus_size);
+	}
+};
+
+template <HasDims Traits>
+struct ResizableSize
+{
+	/// Dimension of the grid.
+	static constexpr Dim k_dims = Traits::k_dims;
+	/// D-dimensional signed integer vector.
+	using VecDi = VecDi<k_dims>;
+
+	/// The dimensions (size) of the grid.
+	VecDi m_size;
+	/// The translational offset of the grid's zero coordinate.
+	VecDi m_offset;
+	/// Cache for use in `inside`.
+	VecDi m_offset_plus_size{m_offset + m_size};
+
+	template <class Archive>
+	void serialize(Archive & ar)
+	{
+		ar(m_size, m_offset, m_offset_plus_size);
+	}
+
+	const VecDi & size() const noexcept
+	{
+		return m_size;
+	}
+
+	VecDi & size() noexcept
+	{
+		return m_size;
+	}
+
+	const VecDi & offset() const noexcept
+	{
+		return m_offset;
+	}
+
+	VecDi & offset() noexcept
+	{
+		return m_offset;
+	}
+
+	void resize(const VecDi & size_, const VecDi & offset_) noexcept
+	{
+		m_size = size_;
+		m_offset = offset_;
+		m_offset_plus_size = m_offset + size_;
 	}
 
 	/**
@@ -400,6 +495,83 @@ struct AccessByRef
 	}
 };
 
+template <
+	HasDimsAndLeafType Traits,
+	HasSize Size,
+	HasData Data,
+	HasAssertBounds<Traits::k_dims> Assert>
+struct AccessByValue
+{
+	/// Dimension of the grid.
+	static const Dim k_dims = Traits::k_dims;
+	/// Type of data to store in grid nodes.
+	using Leaf = typename Traits::Leaf;
+	/// D-dimensional signed integer vector.
+	using VecDi = Felt::VecDi<k_dims>;
+
+	Size const & m_size_impl;
+	Data & m_data_impl;
+	Assert const & m_assert_impl;
+
+	/**
+	 * Get the value stored in the grid.
+	 *
+	 * @param pos_ position in grid to query.
+	 * @return internally stored value at given grid position
+	 */
+	Leaf get(const VecDi & pos_) const noexcept
+	{
+#ifdef FELT2_DEBUG_ENABLED
+		m_assert_impl.assert_pos_bounds(pos_, "get: ");
+#endif
+		const PosIdx idx = m_size_impl.index(pos_);
+		return get(idx);
+	}
+
+	/**
+	 * Get the value stored in the grid.
+	 *
+	 * @param pos_idx_ data index of position to query.
+	 * @return internally stored value at given grid position
+	 */
+	Leaf get(const PosIdx pos_idx_) const noexcept
+	{
+#ifdef FELT2_DEBUG_ENABLED
+		m_assert_impl.assert_pos_idx_bounds(pos_idx_, "get: ");
+#endif
+		return m_data_impl.data()[pos_idx_];
+	}
+
+	/**
+	 * Set the value stored in the grid.
+	 *
+	 * @param pos_ position in grid to query.
+	 * @param val_ value to copy into grid at pos_.
+	 */
+	void set(const VecDi & pos_, Leaf val_)
+	{
+#ifdef FELT2_DEBUG_ENABLED
+		m_assert_impl.assert_pos_bounds(pos_, "set: ");
+#endif
+		const PosIdx idx = m_size_impl.index(pos_);
+		set(idx, val_);
+	}
+
+	/**
+	 * Set the value stored in the grid.
+	 *
+	 * @param pos_idx_ data index of position to query.
+	 * @param val_ value to copy into grid at pos_.
+	 */
+	void set(const PosIdx pos_idx_, Leaf val_)
+	{
+#ifdef FELT2_DEBUG_ENABLED
+		m_assert_impl.assert_pos_bounds(pos_idx_, "set: ");
+#endif
+		m_data_impl.data()[pos_idx_] = val_;
+	}
+};
+
 template <HasLeafType Traits>
 struct DataArray
 {
@@ -429,4 +601,35 @@ struct DataArray
 		ar(m_data);
 	}
 };
+
+template <HasLeafType Traits>
+struct DataArraySpan
+{
+	using Leaf = typename Traits::Leaf;
+	using Array = std::span<Leaf>;
+
+	Array m_data{};
+
+	Array & data()
+	{
+		return m_data;
+	}
+
+	const Array & data() const
+	{
+		return m_data;
+	}
+
+	/**
+	 * Serialisation hook for cereal library.
+	 *
+	 * @param ar
+	 */
+	template <class Archive>
+	void serialize(Archive & ar)
+	{
+		ar(m_data);
+	}
+};
+
 }  // namespace felt2::components
