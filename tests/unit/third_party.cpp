@@ -9,7 +9,6 @@ using span = std::span<Args...>;
 }  // namespace sycl
 #include <oneapi/mkl.hpp>
 
-
 // Eigen
 //   * OpenSYCL (hipSYCL) not supported because missing `isinf` and `isfinite` builtins. So must
 //     #undef SYCL_DEVICE_ONLY (which probably shouldn't be set by OpenSYCL, but it is).
@@ -20,8 +19,7 @@ using span = std::span<Args...>;
 #define was_SYCL_DEVICE_ONLY SYCL_DEVICE_ONLY
 #undef SYCL_DEVICE_ONLY
 #endif
-// Ensure EIGEN_DEFAULT_IO_FORMAT is defined early
-#include <convfelt/felt2/typedefs.hpp>
+
 #include <Eigen/Eigen>
 #ifdef was_SYCL_DEVICE_ONLY
 #define SYCL_DEVICE_ONLY was_SYCL_DEVICE_ONLY
@@ -49,6 +47,7 @@ using span = std::span<Args...>;
 #include <cppcoro/sync_wait.hpp>
 #include <cppcoro/task.hpp>
 
+#include <convfelt/felt2/typedefs.hpp>
 #include <convfelt/ConvGrid.hpp>
 #include <convfelt/iter.hpp>
 #include <convfelt/memory.hpp>

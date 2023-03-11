@@ -3,7 +3,7 @@
 #pragma once
 
 /// Format Eigen vectors as row vectors, i.e. "(1,3,2)".
-#define EIGEN_DEFAULT_IO_FORMAT Eigen::IOFormat(3, DontAlignCols, " ", ",", "", "", "(", ")")
+//#define EIGEN_DEFAULT_IO_FORMAT Eigen::IOFormat(3, DontAlignCols, " ", ",", "", "", "(", ")")
 
 #include <limits>
 
