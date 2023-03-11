@@ -45,31 +45,33 @@ struct USMDataArray
 
 struct Stream
 {
-#ifdef SYCL_DEVICE_ONLY
-	using StreamType = sycl::stream;
-#else
-	using StreamType = std::ostream;
-#endif
-
 	[[nodiscard]] bool has_stream() const
 	{
+#ifdef SYCL_DEVICE_ONLY
 		return m_stream != nullptr;
+#else
+		return true;
+#endif
 	}
 
-	[[nodiscard]] StreamType & get_stream() const
+#ifdef SYCL_DEVICE_ONLY
+	[[nodiscard]] sycl::stream & get_stream() const
 	{
+		assert(has_stream());
 		return *m_stream;
 	}
+#else
+	[[nodiscard]] std::ostream & get_stream() const
+	{
+		return std::cerr;
+	}
+#endif
 
-	void set_stream(StreamType * stream)
+	void set_stream(sycl::stream* stream)
 	{
 		m_stream = stream;
 	}
 
-#ifdef SYCL_DEVICE_ONLY
-	StreamType * m_stream{nullptr};
-#else
-	StreamType * m_stream{&std::cerr};
-#endif
+	sycl::stream * m_stream{nullptr};
 };
 }  // namespace felt2::components

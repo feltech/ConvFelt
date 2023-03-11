@@ -430,40 +430,6 @@ private:
 	ChildrenGrid m_children;
 
 public:
-	struct scoped_stream_t
-	{
-#ifdef SYCL_DEVICE_ONLY
-		scoped_stream_t(This & parent, StreamImpl::StreamType * stream)
-			: m_parent{parent}, m_prev_stream{&m_parent.get_stream()}
-		{
-			m_parent.set_stream(stream);
-			m_parent.children().set_stream(stream);
-			for (auto & child : convfelt::iter::val(m_parent.children())) child.set_stream(stream);
-		}
-
-		~scoped_stream_t()
-		{
-			m_parent.set_stream(m_prev_stream);
-			m_parent.children().set_stream(m_prev_stream);
-			for (auto & child : convfelt::iter::val(m_parent.children()))
-				child.set_stream(m_prev_stream);
-		}
-
-	private:
-		This & m_parent;
-		StreamImpl::StreamType * m_prev_stream;
-#endif
-	};
-
-	scoped_stream_t scoped_stream([[maybe_unused]] sycl::stream * stream)
-	{
-#ifdef SYCL_DEVICE_ONLY
-		return {*this, stream};
-#else
-		return {};
-#endif
-	};
-
 	ConvGridTD(const VecDi & size_, const felt2::VecDi<D - 1> & child_window_)
 		: ConvGridTD{size_, window_to_size(child_window_, size_), {0, 0, 0}}
 	{
@@ -541,6 +507,10 @@ public:
 	{
 		return m_matrix_impl.matrix(std::forward<decltype(args)>(args)...);
 	}
+	decltype(auto) has_stream(auto &&... args) const noexcept
+	{
+		return m_stream_impl.has_stream(std::forward<decltype(args)>(args)...);
+	}
 	decltype(auto) get_stream(auto &&... args) const noexcept
 	{
 		return m_stream_impl.get_stream(std::forward<decltype(args)>(args)...);
@@ -549,9 +519,12 @@ public:
 	{
 		return m_stream_impl.get_stream(std::forward<decltype(args)>(args)...);
 	}
-	decltype(auto) set_stream(auto &&... args) noexcept
+	decltype(auto) set_stream(sycl::stream * stream) noexcept
 	{
-		return m_stream_impl.set_stream(std::forward<decltype(args)>(args)...);
+		m_children.set_stream(stream);
+		for (auto & child : convfelt::iter::val(m_children))
+			child.set_stream(stream);
+		return m_stream_impl.set_stream(stream);
 	}
 
 private:

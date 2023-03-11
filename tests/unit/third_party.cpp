@@ -414,7 +414,7 @@ SCENARIO("SyCL with ConvGrid")
 				[&](sycl::handler & cgh)
 				{
 					sycl::stream os{2048, 256, cgh};
-					[[maybe_unused]] auto const scoped_stream = pgrid->scoped_stream(&os);
+					pgrid->set_stream(&os);
 
 					cgh.parallel_for<class grid_mult>(
 						work_items,
@@ -424,6 +424,13 @@ SCENARIO("SyCL with ConvGrid")
 								val *= 2;
 						});
 				});
+
+			pgrid->set_stream(nullptr);
+			// Host-side now, so should have stream no matter what.
+			CHECK(pgrid->has_stream());
+
+			pgrid->get_stream() << "Testing host-side streaming works\n";
+
 			q.wait_and_throw();
 			THEN("result is as expected")
 			{
@@ -509,8 +516,7 @@ SCENARIO("Applying filter to ConvGrid")
 
 				using MatrixMap =
 					Eigen::Map<Eigen::Matrix<felt2::Scalar, Eigen::Dynamic, Eigen::Dynamic>, 0>;
-				using ColVectorMap =
-					Eigen::Map<Eigen::Matrix<felt2::Scalar, Eigen::Dynamic, 1>, 0>;
+				using ColVectorMap = Eigen::Map<Eigen::Matrix<felt2::Scalar, Eigen::Dynamic, 1>, 0>;
 
 				std::size_t weights_size = static_cast<std::size_t>(filter_output_shape.prod()) *
 					static_cast<std::size_t>(filter_input_shape.prod());
@@ -552,10 +558,8 @@ SCENARIO("Applying filter to ConvGrid")
 						[&](sycl::handler & cgh)
 						{
 							sycl::stream os{2048, 256, cgh};
-							[[maybe_unused]] auto const scoped_input_stream =
-								filter_input_grid->scoped_stream(&os);
-							[[maybe_unused]] auto const scoped_output_stream =
-								filter_output_grid->scoped_stream(&os);
+							filter_input_grid->set_stream(&os);
+							filter_output_grid->set_stream(&os);
 
 							assert(weights.rows() == filter_output_grid->child_size().prod());
 							assert(weights.cols() == filter_input_grid->child_size().prod());
