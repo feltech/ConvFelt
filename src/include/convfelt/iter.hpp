@@ -16,7 +16,7 @@ namespace concepts
 namespace helpers
 {
 template <class G>
-constexpr Felt::Dim DimFor = Felt::Impl::Traits<std::decay_t<G>>::t_dims;
+constexpr Felt::Dim DimFor = std::decay_t<G>::Traits::k_dims;
 
 template <class G>
 using VecDiFor = Felt::VecDi<DimFor<G>>;

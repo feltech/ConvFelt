@@ -4,11 +4,7 @@
 
 #include <sycl/sycl.hpp>
 
-#include <Felt/Impl/Common.hpp>
-#include <Felt/Impl/Mixin/GridMixin.hpp>
-#include <Felt/Impl/Mixin/NumericMixin.hpp>
-#include <Felt/Impl/Mixin/PartitionedMixin.hpp>
-#include <Felt/Impl/Util.hpp>
+#include <Felt/Impl/Grid.hpp>
 
 #include "assert_compat.hpp"
 
@@ -39,196 +35,26 @@
 
 namespace convfelt
 {
-template <class Traits>
-concept uses_usm_allocator = std::same_as<
-	typename Traits::Allocator,
-	sycl::usm_allocator<typename Traits::Leaf, sycl::usm::alloc::shared>>;
-}
 
-namespace Felt::Impl
-{
-namespace Mixin
-{
-namespace Numeric
-{
-template <class TDerived>
-class PartitionedAsColMajorMatrix
-{
-private:
-	using Traits = Impl::Traits<TDerived>;
-	/// Type of data to store in grid nodes.
-	using Leaf = typename Traits::Leaf;
-	static constexpr Dim t_dims = Traits::t_dims;
-	using VecDi = Felt::VecDi<t_dims>;
+template <typename T, Felt::Dim D>
+using InputGridTD = Felt::Impl::Grid::Simple<T, D>;
+using InputGrid = InputGridTD<convfelt::Scalar, 3>;
 
-	Felt::NodeIdx const m_child_size;
-	Felt::NodeIdx const m_num_children;
-
-protected:
-	using MatrixMap =
-		Eigen::Map<Eigen::Matrix<Leaf, Eigen::Dynamic, Eigen::Dynamic, Eigen::ColMajor>, 0>;
-	using MatrixConstMap =
-		Eigen::Map<Eigen::Matrix<Leaf, Eigen::Dynamic, Eigen::Dynamic, Eigen::ColMajor> const, 0>;
-
-	PartitionedAsColMajorMatrix(VecDi const & child_size, VecDi const & num_children)
-		: m_child_size{child_size.prod()}, m_num_children{num_children.prod()}
-	{
-	}
-
-	/**
-	 * Map the raw data to a (column-major) Eigen::Map, which can be used for BLAS arithmetic.
-	 *
-	 * @return Eigen compatible vector of data array.
-	 */
-	MatrixMap matrix()
-	{
-		return MatrixMap{pself->data().data(), m_child_size, m_num_children};
-	}
-
-	MatrixConstMap matrix() const
-	{
-		return MatrixConstMap{pself->data().data(), m_child_size, m_num_children};
-	}
-};
-}  // namespace Numeric
-
-namespace Grid
-{
-
-template <class TDerived>
-class DataSpan
-{
-private:
-	using Traits = Impl::Traits<TDerived>;
-	/// Type of data to store in grid nodes.
-	using Leaf = typename Traits::Leaf;
-	static constexpr Dim t_dims = Traits::t_dims;
-	using VecDi = Felt::VecDi<t_dims>;
-
-protected:
-	using DataArray = typename Traits::DataArray;
-	DataArray m_data;
-
-protected:
-	DataSpan(sycl::context ctx, sycl::device dev)
-		requires convfelt::uses_usm_allocator<Traits>
-		: m_data{
-			  sycl::usm_allocator<Leaf, sycl::usm::alloc::shared>{std::move(ctx), std::move(dev)}}
-	{
-	}
-
-	DataSpan() = default;
-
-	DataArray & data()
-	{
-		return m_data;
-	}
-
-	const DataArray & data() const
-	{
-		return m_data;
-	}
-
-	/**
-	 * Serialisation hook for cereal library.
-	 *
-	 * @param ar
-	 */
-	template <class Archive>
-	void serialize(Archive & ar)
-	{
-		ar(m_data);
-	}
-};
-
-template <class TDerived>
-class AssertBounds
-{
-	using Traits = Impl::Traits<TDerived>;
-	/// Type of data to store in grid nodes.
-	using Leaf = typename Traits::Leaf;
-	static constexpr Dim t_dims = Traits::t_dims;
-	using VecDi = Felt::VecDi<t_dims>;
-
-protected:
-#ifdef SYCL_DEVICE_ONLY
-	using Stream = sycl::stream *;
-#else
-	using Stream = std::ostream *;
-#endif
-
-	[[nodiscard]] Stream get_stream() const
-	{
-		return m_stream;
-	}
-
-	void set_stream(Stream stream)
-	{
-		m_stream = stream;
-	}
-
-	void assert_pos_bounds(const Felt::PosIdx pos_idx_, const char * title_) const
-	{
-		assert_pos_idx_bounds(pos_idx_, title_);
-	}
-
-	void assert_pos_idx_bounds(const VecDi & pos_, const char * title_) const
-	{
-		assert_pos_bounds(pos_, title_);
-	}
-
-	void assert_pos_bounds(const VecDi & pos_, const char * title_) const
-	{
-		if (m_stream && !pself->inside(pos_))
-		{
-			*m_stream << "AssertionError: " << title_ << " assert_pos_bounds(" << pos_(0);
-			for (Felt::TupleIdx axis = 1; axis < pos_.size(); ++axis)
-				*m_stream << ", " << pos_(axis);
-			*m_stream << ")\n";
-		}
-		assert(pself->inside(pos_));
-	}
-
-	void assert_pos_idx_bounds(const PosIdx pos_idx_, const char * title_) const
-	{
-		if (m_stream && pos_idx_ >= pself->data().size())
-		{
-			auto pos = pself->index(pos_idx_);
-			*m_stream << "AssertionError: " << title_ << " assert_pos_idx_bounds(" << pos_idx_
-					  << ") i.e. (" << pos(0);
-			for (Felt::TupleIdx axis = 1; axis < pos.size(); ++axis) *m_stream << ", " << pos(axis);
-			*m_stream << ")\n";
-		}
-		assert(pos_idx_ < pself->data().size());
-	}
-
-private:
-#ifdef SYCL_DEVICE_ONLY
-	Stream m_stream{nullptr};
-#else
-	Stream m_stream{&std::cerr};
-#endif
-};
-}  // namespace Grid
-}  // namespace Mixin
-
-template <typename T, Dim D, bool is_device_shared = false>
+template <typename T, felt2::Dim D, bool is_device_shared = false>
 class ByRef
 {
-private:
+public:
 	using This = ByRef<T, D>;
 
 	struct Traits
 	{
 		using Leaf = T;
-		static constexpr Dim k_dims = D;
+		static constexpr felt2::Dim k_dims = D;
 	};
 
-public:
-	using VecDi = VecDi<Traits::k_dims>;
+	using VecDi = felt2::VecDi<Traits::k_dims>;
 	using Leaf = Traits::Leaf;
 
-private:
 	using SizeImpl = felt2::components::Size<Traits>;
 	using StreamImpl = felt2::components::Stream;
 	using DataImpl = std::conditional_t<
@@ -240,6 +66,7 @@ private:
 	using AccessImpl = felt2::components::AccessByRef<Traits, SizeImpl, DataImpl, AssertBoundsImpl>;
 	using ActivateImpl = felt2::components::Activate<Traits, SizeImpl, DataImpl, StreamImpl>;
 
+private:
 	SizeImpl const m_size_impl;
 	StreamImpl m_stream_impl{};
 	AssertBoundsImpl const m_assert_bounds_impl{m_stream_impl, m_size_impl, m_data_impl};
@@ -313,18 +140,10 @@ public:
 	}
 };
 
-}  // namespace Felt::Impl
-
-namespace convfelt
-{
-template <typename T, Felt::Dim D>
-using InputGridTD = Felt::Impl::Grid::Simple<T, D>;
-using InputGrid = InputGridTD<convfelt::Scalar, 3>;
-
 template <typename T, Felt::Dim D>
 class FilterTD
 {
-private:
+public:
 	using This = FilterTD<T, D>;
 
 	struct Traits
@@ -333,7 +152,6 @@ private:
 		static constexpr felt2::Dim k_dims = D;
 	};
 
-public:
 	using VecDi = felt2::VecDi<Traits::k_dims>;
 	using Leaf = Traits::Leaf;
 
@@ -462,7 +280,7 @@ using Filter = FilterTD<convfelt::Scalar, 3>;
 template <typename T, Felt::Dim D, bool is_device_shared = false>
 class ConvGridTD
 {
-private:
+public:
 	using This = ConvGridTD<T, D, is_device_shared>;
 
 	struct Traits
@@ -471,13 +289,11 @@ private:
 		static constexpr felt2::Dim k_dims = D;
 	};
 
-public:
 	using VecDi = felt2::VecDi<Traits::k_dims>;
 	using Leaf = Traits::Leaf;
-	using Child = convfelt::FilterTD<Leaf, Traits::k_dims>;
-	using ChildrenGrid = Felt::Impl::ByRef<Child, Traits::k_dims, is_device_shared>;
+	using Child = FilterTD<Leaf, Traits::k_dims>;
+	using ChildrenGrid = ByRef<Child, Traits::k_dims, is_device_shared>;
 
-private:
 	using SizeImpl = felt2::components::Size<Traits>;
 	using ChildrenSizeImpl = felt2::components::ChildrenSize<Traits, SizeImpl>;
 	using StreamImpl = felt2::components::Stream;
@@ -489,6 +305,7 @@ private:
 		felt2::components::AssertBounds<Traits, StreamImpl, SizeImpl, DataImpl>;
 	using MatrixImpl = felt2::components::EigenColMajor2DMap<Traits, DataImpl, ChildrenSizeImpl>;
 
+private:
 	DataImpl m_data_impl;
 	SizeImpl const m_size_impl;
 	ChildrenSizeImpl const m_children_size_impl;
@@ -643,14 +460,13 @@ private:
 		m_data_impl.data().resize(matrix_size.prod());
 		std::span const all_data{m_data_impl.data()};
 
-		felt2::PosIdx const num_child_idxs = m_children_size_impl.num_elems_per_child();
 		m_children_size_impl.resize_children(m_children);
 
 		for (auto const & [idx, child] : convfelt::iter::idx_and_val(m_children))
 		{
-			felt2::PosIdx const num_used_child_idxs =
-				static_cast<felt2::PosIdx>(child.size().prod());
-			child.data() = all_data.subspan(idx * num_child_idxs, num_used_child_idxs);
+			auto const num_used_child_idxs = static_cast<felt2::PosIdx>(child.size().prod());
+			child.data() = all_data.subspan(
+				idx * m_children_size_impl.num_elems_per_child(), num_used_child_idxs);
 		}
 	}
 
@@ -664,29 +480,3 @@ private:
 
 using ConvGrid = ConvGridTD<convfelt::Scalar, 3>;
 }  // namespace convfelt
-
-namespace Felt::Impl
-{
-template <typename T, Felt::Dim D, bool is_device_shared>
-struct Traits<convfelt::ConvGridTD<T, D, is_device_shared>>
-{
-	/// Single index stored in each grid node.
-	using Leaf = T;
-	/// Dimension of grid.
-	static constexpr Dim t_dims = D;
-};
-
-template <typename T, Felt::Dim D>
-struct Traits<convfelt::FilterTD<T, D>>
-{
-	using Leaf = T;
-	static constexpr Dim t_dims = D;
-};
-
-template <typename T, Felt::Dim D, bool is_device_shared>
-struct Traits<Felt::Impl::ByRef<T, D, is_device_shared>>
-{
-	using Leaf = T;
-	static constexpr Dim t_dims = D;
-};
-}  // namespace Felt::Impl
