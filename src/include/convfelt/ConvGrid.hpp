@@ -283,8 +283,9 @@ public:
 	using MatrixImpl = felt2::components::EigenMap<Traits, DataImpl>;
 
 private:
-	DataImpl m_data_impl{};
+
 	SizeImpl m_size_impl;
+	DataImpl m_data_impl{};
 	StreamImpl m_stream_impl{};
 	AssertBoundsImpl const m_assert_bounds_impl{m_stream_impl, m_size_impl, m_data_impl};
 	AccessImpl m_access_impl{m_size_impl, m_data_impl, m_assert_bounds_impl};
@@ -294,29 +295,23 @@ public:
 	explicit FilterTD(SizeImpl size_impl) : m_size_impl{std::move(size_impl)} {}
 
 	FilterTD(This const & other)
-		: m_data_impl{other.m_data_impl},
-		  m_size_impl{other.m_size_impl},
+		: m_size_impl{other.m_size_impl},
+		  m_data_impl{other.m_data_impl},
 		  m_stream_impl{other.m_stream_impl},
-		  m_assert_bounds_impl{m_stream_impl, m_size_impl, m_data_impl},
-		  m_access_impl{m_size_impl, m_data_impl, m_assert_bounds_impl},
-		  m_matrix_impl{m_data_impl}
+		  m_assert_bounds_impl{other.m_assert_bounds_impl},
+		  m_access_impl{other.m_access_impl},
+		  m_matrix_impl{other.m_matrix_impl}
 	{
 	}
 
 	FilterTD(This && other) noexcept
-		: m_data_impl{std::move(other.m_data_impl)},
-		  m_size_impl{std::move(other.m_size_impl)},
+		: m_size_impl{std::move(other.m_size_impl)},
+		  m_data_impl{std::move(other.m_data_impl)},
 		  m_stream_impl{std::move(other.m_stream_impl)},
-		  m_assert_bounds_impl{m_stream_impl, m_size_impl, m_data_impl},
-		  m_access_impl{m_size_impl, m_data_impl, m_assert_bounds_impl},
-		  m_matrix_impl{m_data_impl}
+		  m_assert_bounds_impl{std::move(other.m_assert_bounds_impl)},
+		  m_access_impl{std::move(other.m_access_impl)},
+		  m_matrix_impl{std::move(other.m_matrix_impl)}
 	{
-	}
-
-	FilterTD & operator=(FilterTD other) noexcept
-	{
-		std::swap(*this, other);
-		return *this;
 	}
 
 	decltype(auto) data(auto &&... args) noexcept
@@ -522,8 +517,7 @@ public:
 	decltype(auto) set_stream(sycl::stream * stream) noexcept
 	{
 		m_children.set_stream(stream);
-		for (auto & child : convfelt::iter::val(m_children))
-			child.set_stream(stream);
+		for (auto & child : convfelt::iter::val(m_children)) child.set_stream(stream);
 		return m_stream_impl.set_stream(stream);
 	}
 

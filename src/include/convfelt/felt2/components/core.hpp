@@ -64,10 +64,10 @@ template <class T>
 concept IsResizeableData = IsData<T> &&
 	requires(T obj) {
 		{
-			obj.resize(std::declval<PosIdx>())
+			obj.reserve(std::declval<PosIdx>())
 		};
 		{
-			obj.resize(std::declval<PosIdx>(), std::declval<value_type_t<decltype(obj.data())>>())
+			obj.push_back(std::declval<value_type_t<decltype(obj.data())>>())
 		};
 	};
 
@@ -421,7 +421,7 @@ struct AssertBounds
 	}
 };
 
-template <HasDimsAndLeafType Traits, HasSize Size, HasData Data, HasStream Stream>
+template <HasDimsAndLeafType Traits, HasSize Size, HasResizeableData Data, HasStream Stream>
 struct Activate
 {
 	/// Dimension of the grid.
@@ -473,10 +473,13 @@ struct Activate
 	 */
 	void activate()
 	{
-		auto const & size = m_size_impl.size();
-		NodeIdx arr_size = size(0);
-		for (Dim i = 1; i < size.size(); i++) arr_size *= size(i);
-		m_data_impl.data().resize(PosIdx(arr_size), m_background);
+		assert(m_data_impl.data().size() == 0);
+		// Note: resize() on libstdc++ 11 invokes operator=(), i.e. Copy/MoveAssignable, when we
+		// only want to enforce Copy/MoveInsertable, i.e. copy/move constructor. So here we
+		// essentially reimplement resize() (with the added precondition that data is empty).
+		auto const new_size = static_cast<PosIdx>(m_size_impl.size().prod());
+		m_data_impl.data().reserve(new_size);
+		for (PosIdx idx = 0; idx < new_size; ++idx) m_data_impl.data().push_back(m_background);
 	}
 
 	/**
