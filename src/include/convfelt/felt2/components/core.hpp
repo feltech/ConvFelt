@@ -390,11 +390,14 @@ struct AssertBounds
 					m_size_impl.inside(pos_) &&
 					"assert_pos_bounds: debug unavailable, no stream set");
 
-			m_stream_impl.get_stream()
-				<< "AssertionError: " << title_ << " assert_pos_bounds(" << pos_(0);
-			for (Dim axis = 1; axis < pos_.size(); ++axis)
-				m_stream_impl.get_stream() << ", " << pos_(axis);
-			m_stream_impl.get_stream() << ")\n";
+			m_stream_impl.get_stream() << "AssertionError: " << title_ << " assert_pos_bounds";
+			format_pos(m_stream_impl.get_stream(), pos_);
+			m_stream_impl.get_stream() << " is not in ";
+			format_pos(m_stream_impl.get_stream(), m_size_impl.offset());
+			typename Size::VecDi max_extent = m_size_impl.offset() + m_size_impl.size();
+			m_stream_impl.get_stream() << " - ";
+			format_pos(m_stream_impl.get_stream(), max_extent);
+			m_stream_impl.get_stream() << "\n";
 		}
 		assert(m_size_impl.inside(pos_));
 	}
@@ -411,7 +414,8 @@ struct AssertBounds
 			m_stream_impl.get_stream() << "AssertionError: " << title_ << " assert_pos_idx_bounds("
 									   << pos_idx_ << ") i.e. ";
 			format_pos(m_stream_impl.get_stream(), pos);
-			m_stream_impl.get_stream() << "\n";
+			m_stream_impl.get_stream()
+				<< "is greater than extent " << m_data_impl.data().size() << "\n";
 		}
 		assert(pos_idx_ < m_data_impl.data().size());
 	}
