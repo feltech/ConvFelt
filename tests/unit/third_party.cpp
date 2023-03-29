@@ -1,3 +1,5 @@
+#define EIGEN_DEFAULT_IO_FORMAT Eigen::IOFormat(3, DontAlignCols, " ", ",", "", "", "(", ")")
+
 #include <span>
 
 #include <sycl/sycl.hpp>
