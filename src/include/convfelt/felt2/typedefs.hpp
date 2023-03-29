@@ -20,6 +20,39 @@
 #define FELT2_DEBUG(...)
 #endif
 
+#define FELT2_FWD_COMPONENT_FN(comp, fn)\
+decltype(auto) fn(auto &&... args)\
+{\
+	return comp.fn(std::forward<decltype(args)>(args)...);\
+}\
+decltype(auto) fn(auto &&... args) const\
+{\
+	return comp.fn(std::forward<decltype(args)>(args)...);\
+}
+
+#define FELT2_FWD_COMPONENT_FN_NOEXCEPT(comp, fn)\
+decltype(auto) fn(auto &&... args) noexcept\
+{\
+	return comp.fn(std::forward<decltype(args)>(args)...);\
+}\
+decltype(auto) fn(auto &&... args) const noexcept\
+{\
+	return comp.fn(std::forward<decltype(args)>(args)...);\
+}
+
+#define FELT2_FWD_COMPONENT_FN_CONST(comp, fn)\
+decltype(auto) fn(auto &&... args) const\
+{\
+	return comp.fn(std::forward<decltype(args)>(args)...);\
+}
+
+#define FELT2_FWD_COMPONENT_FN_CONST_NOEXCEPT(comp, fn)\
+decltype(auto) fn(auto &&... args) const noexcept\
+{\
+	return comp.fn(std::forward<decltype(args)>(args)...);\
+}
+
+
 namespace felt2
 {
 /**
