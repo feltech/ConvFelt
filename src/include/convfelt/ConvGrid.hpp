@@ -298,9 +298,9 @@ public:
 		: m_size_impl{other.m_size_impl},
 		  m_data_impl{other.m_data_impl},
 		  m_stream_impl{other.m_stream_impl},
-		  m_assert_bounds_impl{other.m_assert_bounds_impl},
-		  m_access_impl{other.m_access_impl},
-		  m_matrix_impl{other.m_matrix_impl}
+		  m_assert_bounds_impl{m_stream_impl, m_size_impl, m_data_impl},
+		  m_access_impl{m_size_impl, m_data_impl, m_assert_bounds_impl},
+		  m_matrix_impl{m_data_impl}
 	{
 	}
 
@@ -308,9 +308,9 @@ public:
 		: m_size_impl{std::move(other.m_size_impl)},
 		  m_data_impl{std::move(other.m_data_impl)},
 		  m_stream_impl{std::move(other.m_stream_impl)},
-		  m_assert_bounds_impl{std::move(other.m_assert_bounds_impl)},
-		  m_access_impl{std::move(other.m_access_impl)},
-		  m_matrix_impl{std::move(other.m_matrix_impl)}
+		  m_assert_bounds_impl{m_stream_impl, m_size_impl, m_data_impl},
+		  m_access_impl{m_size_impl, m_data_impl, m_assert_bounds_impl},
+		  m_matrix_impl{m_data_impl}
 	{
 	}
 
