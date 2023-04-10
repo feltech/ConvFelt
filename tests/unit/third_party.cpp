@@ -175,6 +175,117 @@ SCENARIO("Using OpenImageIO with cppcoro and loading into Felt grid")
 	}
 }
 
+felt2::Vec3i input_per_filter_size_from_source_and_filter_size(
+	felt2::Vec3i const & source_size,
+	felt2::Vec3i const & filter_size,
+	felt2::Vec3i const & filter_stride)
+{
+	felt2::Vec3i input_per_filter_size = felt2::Vec3i::Ones();
+	auto const source_window = source_size.head<2>();
+	auto const filter_window = filter_size.head<2>();
+	auto const stride_window = filter_stride.head<2>();
+	auto output_window = input_per_filter_size.head<2>();
+	output_window += ((source_window - filter_window).array() / stride_window.array()).matrix();
+	return input_per_filter_size;
+}
+
+felt2::Vec3i input_size_from_source_and_filter_size(
+	felt2::Vec3i const & source_size,
+	felt2::Vec3i const & filter_size,
+	felt2::Vec3i const & filter_stride)
+{
+	felt2::Vec3i const input_per_filter_size =
+		input_per_filter_size_from_source_and_filter_size(source_size, filter_size, filter_stride);
+
+	return (input_per_filter_size.array() * filter_size.array()).matrix();
+}
+
+felt2::Vec3i input_pos_to_source_pos(
+	felt2::Vec3i const & filter_size,
+	felt2::Vec3i const & filter_stride,
+	felt2::Vec3i const & input_pos)
+{
+	felt2::Vec3i const filter_id = (input_pos.array() / filter_size.array()).matrix();
+	auto filter_input_start_pos = (filter_id.array() * filter_size.array()).matrix();
+	auto filter_source_start_pos = (filter_stride.array() * filter_id.array()).matrix();
+	auto input_filter_local_pos = input_pos - filter_input_start_pos;
+	auto source_pos = filter_source_start_pos + input_filter_local_pos;
+
+	return source_pos;
+}
+
+template <typename T>
+concept IsCallableWithGlobalPos = requires(T t) {
+	{
+		t(std::declval<felt2::Vec3i>())
+	};
+};
+
+template <typename T>
+concept IsCallableWithFilterPos = requires(T t) {
+	{
+		t(std::declval<felt2::Vec3i>(), std::declval<felt2::Vec3i>())
+	};
+};
+
+template <typename T>
+concept IsCallableWithPos = IsCallableWithGlobalPos<T> || IsCallableWithFilterPos<T>;
+
+void source_pos_to_input_pos(
+	[[maybe_unused]] felt2::Vec3i const & input_size,
+	[[maybe_unused]] felt2::Vec3i const & filter_size,
+	[[maybe_unused]] felt2::Vec3i const & filter_stride,
+	[[maybe_unused]] felt2::Vec3i const & source_size,
+	[[maybe_unused]] felt2::Vec3i const & input_per_filter_size,
+	[[maybe_unused]] felt2::Vec3i const & source_pos,
+	IsCallableWithPos auto && callback)
+{
+	auto one = felt2::Vec3i::Constant(1);
+	auto zero = felt2::Vec3i::Constant(0);
+
+	felt2::Vec3i filter_pos_first = zero;
+	felt2::Vec3i filter_pos_last = zero;
+
+	[[maybe_unused]] auto const one_window = one.head<2>();
+	auto const zero_window = zero.head<2>();
+	auto const source_size_window = source_size.head<2>();
+	auto const source_pos_window = source_pos.head<2>();
+	auto const filter_size_window = filter_size.head<2>();
+	auto const filter_stride_window = filter_stride.head<2>();
+	auto filter_pos_first_window = filter_pos_first.head<2>();
+	auto filter_pos_last_window = filter_pos_last.head<2>();
+
+	filter_pos_last_window.array() =
+		source_pos_window.array().min(source_size_window.array() - filter_size_window.array()) /
+		filter_stride_window.array();
+	// filter_size - filter_stride = source_pos - filter_pos_first * filter_stride
+	// <=> filter_pos_first = (source_pos - filter_size + filter_stride) / filter_stride
+	filter_pos_first_window.array() =
+		(source_pos_window - filter_size_window + filter_stride_window)
+			.array()
+			.max(zero_window.array()) /
+		filter_stride_window.array();
+
+	for (felt2::Dim x = filter_pos_first(0); x <= filter_pos_last(0); ++x)
+		for (felt2::Dim y = filter_pos_first(1); y <= filter_pos_last(1); ++y)
+		{
+			felt2::Vec3i const filter_pos{x, y, 0};
+			auto source_filter_start_pos = (filter_pos.array() * filter_stride.array()).matrix();
+			auto filter_source_local_pos = source_pos - source_filter_start_pos;
+			auto input_filter_start_pos = (filter_pos.array() * filter_size.array()).matrix();
+			auto input_pos = input_filter_start_pos + filter_source_local_pos;
+
+			if constexpr (IsCallableWithGlobalPos<decltype(callback)>)
+			{
+				callback(input_pos);
+			}
+			else if constexpr (IsCallableWithFilterPos<decltype(callback)>)
+			{
+				callback(filter_pos, input_pos);
+			}
+		}
+}
+
 SCENARIO("Input/output ConvGrids")
 {
 	GIVEN("a simple monochrome image file loaded with 1 pixel of zero padding")
@@ -199,19 +310,16 @@ SCENARIO("Input/output ConvGrids")
 		{
 			using FilterGrid = convfelt::ConvGrid;
 
-			const felt2::NodeIdx filter_stride = 2;
+			felt2::Vec3i const filter_stride{2, 2, 0};
 
-			FilterGrid filter_input_grid = [&image_grid, filter_stride]
+			FilterGrid filter_input_grid = [&image_grid, &filter_stride]
 			{
 				felt2::Vec2i const filter_input_window{4, 4};
 				felt2::Vec3i const filter_input_shape{4, 4, 3};
+				felt2::Vec3i const input_size = input_size_from_source_and_filter_size(
+					image_grid.size(), filter_input_shape, filter_stride);
 
-				felt2::Vec3i num_filters = (image_grid.size() - filter_input_shape);
-				num_filters = num_filters / filter_stride + felt2::Vec3i::Ones();
-				felt2::Vec3i const num_connections =
-					(num_filters.array() * filter_input_shape.array()).matrix();
-
-				return FilterGrid{num_connections, filter_input_window};
+				return FilterGrid{input_size, filter_input_window};
 			}();
 			const felt2::Vec3i filter_input_shape = filter_input_grid.child_size();
 
@@ -219,7 +327,9 @@ SCENARIO("Input/output ConvGrids")
 				 convfelt::iter::idx_and_val(filter_input_grid.children()))
 			{
 				const felt2::Vec3i input_pos_start =
-					filter_input_grid.children().index(filter_pos_idx) * filter_stride;
+					(filter_input_grid.children().index(filter_pos_idx).array() *
+					 filter_stride.array())
+						.matrix();
 				(void)input_pos_start;
 
 				for (felt2::PosIdx local_pos_idx : convfelt::iter::pos_idx(filter))
@@ -253,10 +363,8 @@ SCENARIO("Input/output ConvGrids")
 						for (auto const & [pos_idx, pos] :
 							 convfelt::iter::idx_and_pos(filter_input))
 						{
-							felt2::Vec3i const filter_image_start_pos =
-								filter_stride * (pos.array() / filter_input_shape.array()).matrix();
-
-							felt2::Vec3i const image_grid_pos = pos - filter_image_start_pos;
+							felt2::Vec3i const image_grid_pos =
+								input_pos_to_source_pos(filter_input_shape, filter_stride, pos);
 
 							CAPTURE(pos);
 							CAPTURE(image_grid_pos);
@@ -440,81 +548,6 @@ SCENARIO("SyCL with ConvGrid")
 			}
 		}
 	}
-}
-
-felt2::Vec3i input_per_filter_size_from_source_and_filter_size(
-	felt2::Vec3i const & source_size,
-	felt2::Vec3i const & filter_size,
-	felt2::Vec3i const & filter_stride)
-{
-	felt2::Vec3i input_per_filter_size = felt2::Vec3i::Ones();
-	auto const source_window = source_size.head<2>();
-	auto const filter_window = filter_size.head<2>();
-	auto const stride_window = filter_stride.head<2>();
-	auto output_window = input_per_filter_size.head<2>();
-	output_window += ((source_window - filter_window).array() / stride_window.array()).matrix();
-	return input_per_filter_size;
-}
-
-felt2::Vec3i input_size_from_source_and_filter_size(
-	felt2::Vec3i const & source_size,
-	felt2::Vec3i const & filter_size,
-	felt2::Vec3i const & filter_stride)
-{
-	felt2::Vec3i const input_per_filter_size =
-		input_per_filter_size_from_source_and_filter_size(source_size, filter_size, filter_stride);
-
-	return (input_per_filter_size.array() * filter_size.array()).matrix();
-}
-
-felt2::Vec3i input_pos_to_source_pos(
-	felt2::Vec3i const & filter_size,
-	felt2::Vec3i const & filter_stride,
-	felt2::Vec3i const & input_pos)
-{
-	felt2::Vec3i const filter_id = (input_pos.array() / filter_size.array()).matrix();
-	auto filter_input_start_pos = (filter_id.array() * filter_size.array()).matrix();
-	auto filter_source_start_pos = (filter_stride.array() * filter_id.array()).matrix();
-	auto input_filter_local_pos = input_pos - filter_input_start_pos;
-	auto source_pos = filter_source_start_pos + input_filter_local_pos;
-
-	return source_pos;
-}
-
-cppcoro::generator<felt2::Vec3i const> source_pos_to_input_pos(
-	[[maybe_unused]] felt2::Vec3i const & input_size,
-	[[maybe_unused]] felt2::Vec3i const & filter_size,
-	[[maybe_unused]] felt2::Vec3i const & filter_stride,
-	[[maybe_unused]] felt2::Vec3i const & source_size,
-	[[maybe_unused]] felt2::Vec3i const & input_per_filter_size,
-	[[maybe_unused]] felt2::Vec3i const & source_pos)
-{
-	felt2::Vec3i filter_pos_last = felt2::Vec3i::Constant(0);
-
-	auto const source_window = source_pos.head<2>();
-	auto const filter_window = filter_size.head<2>();
-	auto const stride_window = filter_stride.head<2>();
-	auto filter_pos_last_window = filter_pos_last.head<2>();
-	filter_pos_last_window.array() = source_window.array() / stride_window.array();
-
-	felt2::Vec3i filter_pos_first = felt2::Vec3i::Constant(0);
-	auto filter_pos_first_window = filter_pos_first.head<2>();
-	filter_pos_first_window =
-		(filter_pos_last_window - (filter_window.array() / stride_window.array()).matrix())
-			.cwiseMax(0);
-
-	for (felt2::Dim x = filter_pos_first(0); x <= filter_pos_last(0); ++x)
-		for (felt2::Dim y = filter_pos_first(1); y <= filter_pos_last(1); ++y)
-		{
-			felt2::Vec3i const filter_pos{x, y, 0};
-			felt2::Vec3i const source_filter_start_pos =
-				(filter_pos.array() * filter_stride.array()).matrix();
-			felt2::Vec3i const filter_source_local_pos = source_pos - source_filter_start_pos;
-			felt2::Vec3i const input_filter_start_pos =
-				(filter_pos.array() * filter_size.array()).matrix();
-			felt2::Vec3i const input_pos = input_filter_start_pos + filter_source_local_pos;
-			co_yield input_pos;
-		}
 }
 
 SCENARIO("Applying filter to ConvGrid")
@@ -766,6 +799,8 @@ SCENARIO("Applying filter to ConvGrid")
 		felt2::Vec3i const input_size =
 			input_size_from_source_and_filter_size(source_size, filter_size, filter_stride);
 
+		CHECK(input_size == felt2::Vec3i{6, 4, 4});
+
 		WHEN("input grid minimum point is mapped to source grid")
 		{
 			felt2::Vec3i const input_pos{0, 0, 0};
@@ -796,14 +831,14 @@ SCENARIO("Applying filter to ConvGrid")
 
 			using PosArray = std::vector<felt2::Vec3i>;
 			PosArray input_pos_list;
-			for (auto && pos : source_pos_to_input_pos(
-					 input_size,
-					 filter_size,
-					 filter_stride,
-					 source_size,
-					 input_per_filter_size,
-					 source_pos))
-				input_pos_list.push_back(pos);
+			source_pos_to_input_pos(
+				input_size,
+				filter_size,
+				filter_stride,
+				source_size,
+				input_per_filter_size,
+				source_pos,
+				[&](const felt2::Vec3i & pos) { input_pos_list.push_back(pos); });
 
 			THEN("positions care as expected")
 			{
@@ -818,14 +853,14 @@ SCENARIO("Applying filter to ConvGrid")
 
 			using PosArray = std::vector<felt2::Vec3i>;
 			PosArray input_pos_list;
-			for (auto && pos : source_pos_to_input_pos(
-					 input_size,
-					 filter_size,
-					 filter_stride,
-					 source_size,
-					 input_per_filter_size,
-					 source_pos))
-				input_pos_list.push_back(pos);
+			source_pos_to_input_pos(
+				input_size,
+				filter_size,
+				filter_stride,
+				source_size,
+				input_per_filter_size,
+				source_pos,
+				[&](const felt2::Vec3i & pos) { input_pos_list.push_back(pos); });
 
 			THEN("position is as expected")
 			{
@@ -840,20 +875,47 @@ SCENARIO("Applying filter to ConvGrid")
 
 			using PosArray = std::vector<felt2::Vec3i>;
 			PosArray input_pos_list;
-			for (auto && pos : source_pos_to_input_pos(
-					 input_size,
-					 filter_size,
-					 filter_stride,
-					 source_size,
-					 input_per_filter_size,
-					 source_pos))
-				input_pos_list.push_back(pos);
+			source_pos_to_input_pos(
+				input_size,
+				filter_size,
+				filter_stride,
+				source_size,
+				input_per_filter_size,
+				source_pos,
+				[&](const felt2::Vec3i & pos) { input_pos_list.push_back(pos); });
 
 			THEN("position is as expected")
 			{
-				CHECK(
-					input_pos_list ==
-					PosArray{felt2::Vec3i{2, 3, 1}, felt2::Vec3i{0, 1, 1}, felt2::Vec3i{2, 1, 1}});
+				CHECK(input_pos_list == PosArray{felt2::Vec3i{1, 1, 1}, felt2::Vec3i{2, 1, 1}});
+			}
+		}
+
+		WHEN("source grid strided point is mapped to input grid")
+		{
+			felt2::Vec3i const source_pos{0, 2, 0};
+
+			using PosArray = std::vector<felt2::Vec3i>;
+			PosArray filter_pos_list;
+			PosArray global_pos_list;
+			source_pos_to_input_pos(
+				input_size,
+				filter_size,
+				filter_stride,
+				source_size,
+				input_per_filter_size,
+				source_pos,
+				[&](const felt2::Vec3i & filter_pos, const felt2::Vec3i & global_pos)
+				{
+					filter_pos_list.push_back(filter_pos);
+					global_pos_list.push_back(global_pos);
+				});
+
+			THEN("position is as expected")
+			{
+				CAPTURE(filter_pos_list);
+				CAPTURE(global_pos_list);
+				CHECK(std::ranges::equal(filter_pos_list, PosArray{felt2::Vec3i{0, 1, 0}}));
+				CHECK(std::ranges::equal(global_pos_list, PosArray{felt2::Vec3i{0, 2, 0}}));
 			}
 		}
 	}
@@ -880,18 +942,20 @@ SCENARIO("Applying filter to ConvGrid")
 		{
 			sycl::context ctx;
 			sycl::device dev{sycl::gpu_selector_v};
-			// sycl::device dev{sycl::cpu_selector_v};
+			//			sycl::device dev{sycl::cpu_selector_v};
 			using FilterGrid = convfelt::ConvGridTD<felt2::Scalar, 3, true>;
 
-			const felt2::Vec3i filter_stride{2, 2, 1};
+			const felt2::Vec3i filter_stride{2, 2, 0};
+			felt2::Vec3i const filter_size{4, 4, 3};
 
-			felt2::Vec2i const filter_input_window{4, 4};
-			felt2::Vec3i const filter_input_shape{4, 4, 3};
 			felt2::Vec3i const input_size = input_size_from_source_and_filter_size(
-				image_grid.size(), filter_input_shape, filter_stride);
+				image_grid.size(), filter_size, filter_stride);
+
+			auto const input_per_filter_size = input_per_filter_size_from_source_and_filter_size(
+				image_grid.size(), filter_size, filter_stride);
 
 			auto filter_input_grid = convfelt::make_unique_sycl<FilterGrid>(
-				dev, ctx, input_size, filter_input_window, ctx, dev);
+				dev, ctx, input_size, filter_size.head<2>(), ctx, dev);
 
 			for (auto const & [filter_pos_idx, filter] :
 				 convfelt::iter::idx_and_val(filter_input_grid->children()))
@@ -920,7 +984,7 @@ SCENARIO("Applying filter to ConvGrid")
 					image_grid.data().begin(), image_grid.data().end());
 
 				auto filter_input_grid_device = convfelt::make_unique_sycl<FilterGrid>(
-					dev, ctx, input_size, filter_input_window, ctx, dev);
+					dev, ctx, input_size, filter_size.head<2>(), ctx, dev);
 				sycl::range<1> work_items{image_grid_device->data().size()};
 				sycl::queue q{ctx, dev};
 
@@ -933,59 +997,34 @@ SCENARIO("Applying filter to ConvGrid")
 
 						cgh.parallel_for<class grid_copy>(
 							work_items,
-							[filter_stride,
+							[input_size,
+							 filter_stride,
+							 filter_size,
+							 input_per_filter_size,
 							 image_grid_device = image_grid_device.get(),
 							 filter_input_grid_device =
 								 filter_input_grid_device.get()](sycl::item<1> item)
 							{
 								auto & filters = filter_input_grid_device->children();
 
-								felt2::PosIdx const input_pos_idx = item.get_linear_id();
-								felt2::Scalar const input_value =
-									image_grid_device->get(input_pos_idx);
-								felt2::Vec3i const input_pos =
+								[[maybe_unused]] felt2::PosIdx const input_pos_idx =
+									item.get_linear_id();
+								[[maybe_unused]] felt2::Vec3i const source_pos =
 									image_grid_device->index(input_pos_idx);
 
-								felt2::Vec3i const & filter_size =
-									filter_input_grid_device->child_size();
-								felt2::Vec3i const max_extent = filter_size - felt2::Vec3i::Ones();
-								felt2::Vec3i max_child_pos = felt2::Vec3i::Ones() +
-									(input_pos.array() / filter_stride.array()).matrix();
-								felt2::Vec3i const max_out_of_bounds =
-									(max_child_pos.array() * filter_stride.array())
-										.cwiseNotEqual(input_pos.array())
-										.matrix()
-										.template cast<felt2::NodeIdx>();
-								max_child_pos -= max_out_of_bounds;
+								felt2::Scalar const source_value =
+									image_grid_device->get(input_pos_idx);
 
-								felt2::Vec3i min_child_pos =
-									((input_pos - max_extent).array() / filter_stride.array())
-										.max(filters.offset().array())
-										.matrix();
-								felt2::Vec3i const out_of_bounds =
-									(min_child_pos.array() * filter_stride.array())
-										.cwiseNotEqual((input_pos - max_extent).array())
-										.matrix()
-										.template cast<felt2::NodeIdx>();
-								min_child_pos += out_of_bounds;
-
-								assert(min_child_pos != max_child_pos);
-
-								for (felt2::NodeIdx x = min_child_pos(0); x < max_child_pos(0); ++x)
-									for (felt2::NodeIdx y = min_child_pos(1); y < max_child_pos(1);
-										 ++y)
-									{
-										felt2::Vec3i const child_pos{x, y, 0};
-										auto & filter = filters.get(child_pos);
-
-										felt2::Vec3i const filter_start_pos =
-											(child_pos.array() * filter_stride.array()).matrix();
-										felt2::Vec3i const filter_local_input_pos =
-											input_pos - filter_start_pos;
-										felt2::Vec3i const filter_input_pos =
-											filter_local_input_pos + filter.offset();
-										filter.set(filter_input_pos, input_value);
-									}
+								source_pos_to_input_pos(
+									input_size,
+									filter_size,
+									filter_stride,
+									image_grid_device->size(),
+									input_per_filter_size,
+									source_pos,
+									[&](felt2::Vec3i const & filter_pos,
+										felt2::Vec3i const & global_pos)
+									{ filters.get(filter_pos).set(global_pos, source_value); });
 							});
 					});
 				q.wait_and_throw();
@@ -1048,11 +1087,10 @@ SCENARIO("Applying filter to ConvGrid")
 				using ColVectorMap = Eigen::Map<Eigen::Matrix<felt2::Scalar, Eigen::Dynamic, 1>, 0>;
 
 				std::size_t weights_size = static_cast<std::size_t>(filter_output_shape.prod()) *
-					static_cast<std::size_t>(filter_input_shape.prod());
+					static_cast<std::size_t>(filter_size.prod());
 				auto weights_data = sycl::malloc_shared<felt2::Scalar>(weights_size, dev, ctx);
 
-				MatrixMap weights{
-					weights_data, filter_output_shape.prod(), filter_input_shape.prod()};
+				MatrixMap weights{weights_data, filter_output_shape.prod(), filter_size.prod()};
 				weights.setRandom();
 				//				Eigen::Matrix<felt2::Scalar, Eigen::Dynamic, 1> wrong{
 				//					filter_output_grid->child_size().prod(), 1};
