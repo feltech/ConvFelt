@@ -207,7 +207,7 @@ felt2::Vec3i input_pos_to_source_pos(
 {
 	felt2::Vec3i const filter_id = (input_pos.array() / filter_size.array()).matrix();
 	auto filter_input_start_pos = (filter_id.array() * filter_size.array()).matrix();
-	auto filter_source_start_pos = (filter_stride.array() * filter_id.array()).matrix();
+	auto filter_source_start_pos = (filter_id.array() * filter_stride.array()).matrix();
 	auto input_filter_local_pos = input_pos - filter_input_start_pos;
 	auto source_pos = filter_source_start_pos + input_filter_local_pos;
 
@@ -335,7 +335,7 @@ SCENARIO("Input/output ConvGrids")
 				for (felt2::PosIdx local_pos_idx : convfelt::iter::pos_idx(filter))
 				{
 					const felt2::Vec3i input_pos =
-						input_pos_start + felt2::index<3>(local_pos_idx, filter.size());
+						input_pos_start + felt2::index(local_pos_idx, filter.size());
 
 					filter.set(local_pos_idx, image_grid.get(input_pos));
 				}
@@ -968,7 +968,7 @@ SCENARIO("Applying filter to ConvGrid")
 				for (felt2::PosIdx local_pos_idx : convfelt::iter::pos_idx(filter))
 				{
 					const felt2::Vec3i input_pos =
-						input_pos_start + felt2::index<3>(local_pos_idx, filter.size());
+						input_pos_start + felt2::index(local_pos_idx, filter.size());
 
 					filter.set(local_pos_idx, image_grid.get(input_pos));
 				}

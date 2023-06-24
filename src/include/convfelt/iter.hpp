@@ -69,10 +69,8 @@ static constexpr auto pos_idx(concepts::GridWithData auto & grid)
 static inline auto pos(concepts::Grid auto & grid)
 	-> cppcoro::generator<concepts::helpers::VecDiFor<decltype(grid)>>
 {
-	static constexpr auto D = concepts::helpers::DimFor<decltype(grid)>;
-
 	for (auto pos_idx : idx(felt2::PosIdx(grid.size().prod())))
-		co_yield grid.offset() + felt2::index<D>(pos_idx, grid.size());
+		co_yield grid.offset() + felt2::index(pos_idx, grid.size());
 };
 
 template <class G>
@@ -81,12 +79,11 @@ using IdxAndPos = std::tuple<felt2::PosIdx, concepts::helpers::VecDiFor<G>>;
 static inline auto idx_and_pos(concepts::Grid auto & grid)
 	-> cppcoro::generator<IdxAndPos<decltype(grid)>>
 {
-	static constexpr auto D = concepts::helpers::DimFor<decltype(grid)>;
 	using VecDi = concepts::helpers::VecDiFor<decltype(grid)>;
 
 	for (auto const pos_idx : idx(felt2::PosIdx(grid.size().prod())))
 	{
-		VecDi const pos = grid.offset() + felt2::index<D>(pos_idx, grid.size());
+		VecDi const pos = grid.offset() + felt2::index(pos_idx, grid.size());
 		co_yield {pos_idx, pos};
 	}
 };

@@ -242,7 +242,7 @@ struct Size
 	 */
 	PosIdx index(const VecDi & pos_) const noexcept
 	{
-		return felt2::index<k_dims>(pos_, size(), offset());
+		return felt2::index(pos_, size(), offset());
 	}
 
 	/**
@@ -255,7 +255,7 @@ struct Size
 	 */
 	VecDi index(const PosIdx idx_) const noexcept
 	{
-		return felt2::index<k_dims>(idx_, size(), offset());
+		return felt2::index(idx_, size(), offset());
 	}
 
 	/**
@@ -331,7 +331,7 @@ struct ResizableSize
 	 */
 	PosIdx index(const VecDi & pos_) const noexcept
 	{
-		return felt2::index<k_dims>(pos_, size(), offset());
+		return felt2::index(pos_, size(), offset());
 	}
 
 	/**
@@ -344,7 +344,7 @@ struct ResizableSize
 	 */
 	VecDi index(const PosIdx idx_) const noexcept
 	{
-		return felt2::index<k_dims>(idx_, size(), offset());
+		return felt2::index(idx_, size(), offset());
 	}
 
 	/**
@@ -415,7 +415,7 @@ struct AssertBounds
 									   << pos_idx_ << ") i.e. ";
 			format_pos(m_stream_impl.get_stream(), pos);
 			m_stream_impl.get_stream()
-				<< "is greater than extent " << m_data_impl.data().size() << "\n";
+				<< " is greater than extent " << m_data_impl.data().size() << "\n";
 		}
 		assert(pos_idx_ < m_data_impl.data().size());
 	}
