@@ -346,227 +346,6 @@ struct FilterSizeHelper
 	}
 };
 
-SCENARIO("Input/output ConvGrids")
-{
-	GIVEN("a simple monochrome image file loaded with 1 pixel of zero padding")
-	{
-		static constexpr std::string_view file_path = CONVFELT_TEST_RESOURCE_DIR "/plus.png";
-		OIIO::ImageBuf image{std::string{file_path}};
-		image.read();
-		auto image_grid_spec = image.spec();
-		image_grid_spec.width += 2;
-		image_grid_spec.height += 2;
-		image_grid_spec.format = OIIO::TypeDescFromC<felt2::Scalar>::value();
-
-		convfelt::InputGrid image_grid{
-			{image.spec().height + 2, image.spec().width + 2, image_grid_spec.nchannels},
-			{0, 0, 0},
-			0};
-
-		OIIO::ImageBuf image_grid_buf{image_grid_spec, image_grid.data().data()};
-		OIIO::ImageBufAlgo::paste(image_grid_buf, 1, 1, 0, 0, image);
-
-		WHEN("image is split into filter regions")
-		{
-			[[maybe_unused]] FilterSizeHelper filter_input_sizer{
-				.filter_size = {4, 4, 3}, .filter_stride = {2, 2, 0}};
-
-			convfelt::ConvGrid filter_input_grid{
-				filter_input_sizer.input_size_from_source_size(image_grid.size()),
-				filter_input_sizer.filter_size};
-
-			CHECK(filter_input_grid.child_size() == filter_input_sizer.filter_size);
-
-			for (auto const & [filter_pos_idx, filter] :
-				 convfelt::iter::idx_and_val(filter_input_grid.children()))
-			{
-				const felt2::Vec3i input_pos_start =
-					filter_input_sizer.input_start_pos_from_filter_pos(
-						filter_input_grid.children().index(filter_pos_idx));
-
-				for (felt2::PosIdx local_pos_idx : convfelt::iter::pos_idx(filter))
-				{
-					const felt2::Vec3i input_pos =
-						input_pos_start + felt2::index(local_pos_idx, filter.size());
-
-					filter.set(local_pos_idx, image_grid.get(input_pos));
-				}
-			}
-
-			THEN("regions have expected values")
-			{
-				{
-					auto const & filter_input = filter_input_grid.children().get({0, 0, 0});
-					CHECK(filter_input.size() == filter_input_sizer.filter_size);
-
-					for (auto const & filter_grid_pos : convfelt::iter::pos(filter_input))
-					{
-						CAPTURE(filter_grid_pos);
-						CHECK(filter_input.get(filter_grid_pos) == image_grid.get(filter_grid_pos));
-					}
-				}
-				{
-					std::size_t num_nonzero = 0;
-					for (auto const & filter_input :
-						 convfelt::iter::val(filter_input_grid.children()))
-					{
-						CHECK(filter_input.size() == filter_input_sizer.filter_size);
-
-						for (auto const & [pos_idx, pos] :
-							 convfelt::iter::idx_and_pos(filter_input))
-						{
-							felt2::Vec3i const source_pos =
-								filter_input_sizer.source_pos_from_input_pos(pos);
-
-							CAPTURE(pos);
-							CAPTURE(source_pos);
-							CHECK(filter_input.get(pos_idx) == image_grid.get(source_pos));
-
-							if (filter_input.get(pos) != 0)
-								++num_nonzero;
-						}
-					}
-					CHECK(num_nonzero > 0);
-				}
-			}
-		}
-	}
-}
-
-SCENARIO("Basic SyCL usage")
-{
-	GIVEN("Input vectors")
-	{
-		std::vector<float> a = {1.f, 2.f, 3.f, 4.f, 5.f};
-		std::vector<float> b = {-1.f, 2.f, -3.f, 4.f, -5.f};
-		std::vector<float> c(a.size());
-		assert(a.size() == b.size());
-
-		WHEN("vectors are added using sycl")
-		{
-			{
-				sycl::queue q{sycl::gpu_selector_v};
-				sycl::range<1> work_items{a.size()};
-				sycl::buffer<float> buff_a(a.data(), a.size());
-				sycl::buffer<float> buff_b(b.data(), b.size());
-				sycl::buffer<float> buff_c(c.data(), c.size());
-
-				using Allocator = sycl::usm_allocator<float, sycl::usm::alloc::shared>;
-				std::vector<float, Allocator> vals(Allocator{q});
-				vals.push_back(1);
-				vals.push_back(2);
-
-				q.submit(
-					[&](sycl::handler & cgh)
-					{
-						auto access_a = buff_a.get_access<sycl::access::mode::read>(cgh);
-						auto access_b = buff_b.get_access<sycl::access::mode::read>(cgh);
-						auto access_c = buff_c.get_access<sycl::access::mode::write>(cgh);
-
-						cgh.parallel_for<class vector_add>(
-							work_items,
-							[=](sycl::id<1> tid)
-							{ access_c[tid] = access_a[tid] + access_b[tid] + vals[0] + vals[1]; });
-					});
-			}
-			THEN("result is as expected")
-			{
-				std::vector<float> expected = {3.f, 7.f, 3.f, 11.f, 3.f};
-
-				CHECK(c == expected);
-			}
-		}
-	}
-}
-
-SCENARIO("Basic oneMKL usage")
-{
-	GIVEN("Input vectors")
-	{
-		std::vector<float> a = {1.f, 2.f, 3.f, 4.f, 5.f};
-		std::vector<float> b = {-1.f, 2.f, -3.f, 4.f, -5.f};
-		assert(a.size() == b.size());
-
-		WHEN("vectors are added using oneMKL")
-		{
-			{
-				sycl::gpu_selector selector;
-				sycl::queue q{selector};
-				sycl::buffer<float> buff_a(a.data(), a.size());
-				sycl::buffer<float> buff_b(b.data(), b.size());
-
-				// NOTE: if a segfault happens here it's because the ERROR_MSG is nullptr, which
-				// means there are no enabled backend libraries.
-				oneapi::mkl::blas::column_major::axpy(
-					q, static_cast<long>(a.size()), 1.0f, buff_a, 1, buff_b, 1);
-			}
-			THEN("result is as expected")
-			{
-				std::vector<float> expected = {0.f, 4.f, 0.f, 8.f, 0.f};
-
-				CHECK(b == expected);
-			}
-		}
-	}
-}
-
-SCENARIO("SyCL with ConvGrid")
-{
-	GIVEN("Shared grid")
-	{
-		sycl::context ctx;
-		sycl::device dev{sycl::gpu_selector_v};
-		using ConvGrid = convfelt::ConvGridTD<float, 3, true>;
-
-		auto const pgrid = convfelt::make_unique_sycl<ConvGrid>(
-			dev, ctx, felt2::Vec3i{4, 4, 3}, felt2::Vec2i{2, 2}, ctx, dev);
-
-		std::fill(pgrid->data().begin(), pgrid->data().end(), 3);
-		CHECK(pgrid->children().data().size() > 1);
-		CHECK(pgrid->children().data()[0].data().size() > 1);
-		CHECK(&pgrid->children().data()[0].data()[0] == &pgrid->data()[0]);
-
-		WHEN("grid data is doubled using sycl")
-		{
-			sycl::range<1> work_items{pgrid->children().data().size()};
-
-			sycl::queue q{ctx, dev};
-			q.submit([&](sycl::handler & cgh)
-					 { cgh.prefetch(pgrid->data().data(), pgrid->data().size()); });
-			q.submit(
-				[&](sycl::handler & cgh) {
-					cgh.prefetch(pgrid->children().data().data(), pgrid->children().data().size());
-				});
-			q.submit(
-				[&](sycl::handler & cgh)
-				{
-					sycl::stream os{2048, 256, cgh};
-					pgrid->set_stream(&os);
-
-					cgh.parallel_for<class grid_mult>(
-						work_items,
-						[pgrid = pgrid.get()](sycl::id<1> tid)
-						{
-							for (auto & val : convfelt::iter::val(pgrid->children().get(tid)))
-								val *= 2;
-						});
-				});
-
-			pgrid->set_stream(nullptr);
-			// Host-side now, so should have stream no matter what.
-			CHECK(pgrid->has_stream());
-
-			pgrid->get_stream() << "Testing host-side streaming works\n";
-
-			q.wait_and_throw();
-			THEN("result is as expected")
-			{
-				for (auto const val : convfelt::iter::val(*pgrid)) CHECK(val == 6);
-			}
-		}
-	}
-}
-
 SCENARIO("Transforming source image points to filter input grid points and vice versa")
 {
 	GIVEN("stride size 3x3, filter size 3x3 and image size 3x3 with 4 channels")
@@ -940,6 +719,227 @@ SCENARIO("Transforming source image points to filter input grid points and vice 
 				CAPTURE(global_pos_list);
 				CHECK(std::ranges::equal(filter_pos_list, PosArray{felt2::Vec3i{0, 1, 0}}));
 				CHECK(std::ranges::equal(global_pos_list, PosArray{felt2::Vec3i{0, 2, 0}}));
+			}
+		}
+	}
+}
+
+SCENARIO("Input/output ConvGrids")
+{
+	GIVEN("a simple monochrome image file loaded with 1 pixel of zero padding")
+	{
+		static constexpr std::string_view file_path = CONVFELT_TEST_RESOURCE_DIR "/plus.png";
+		OIIO::ImageBuf image{std::string{file_path}};
+		image.read();
+		auto image_grid_spec = image.spec();
+		image_grid_spec.width += 2;
+		image_grid_spec.height += 2;
+		image_grid_spec.format = OIIO::TypeDescFromC<felt2::Scalar>::value();
+
+		convfelt::InputGrid image_grid{
+			{image.spec().height + 2, image.spec().width + 2, image_grid_spec.nchannels},
+			{0, 0, 0},
+			0};
+
+		OIIO::ImageBuf image_grid_buf{image_grid_spec, image_grid.data().data()};
+		OIIO::ImageBufAlgo::paste(image_grid_buf, 1, 1, 0, 0, image);
+
+		WHEN("image is split into filter regions")
+		{
+			[[maybe_unused]] FilterSizeHelper filter_input_sizer{
+				.filter_size = {4, 4, 3}, .filter_stride = {2, 2, 0}};
+
+			convfelt::ConvGrid filter_input_grid{
+				filter_input_sizer.input_size_from_source_size(image_grid.size()),
+				filter_input_sizer.filter_size};
+
+			CHECK(filter_input_grid.child_size() == filter_input_sizer.filter_size);
+
+			for (auto const & [filter_pos_idx, filter] :
+				 convfelt::iter::idx_and_val(filter_input_grid.children()))
+			{
+				const felt2::Vec3i input_pos_start =
+					filter_input_sizer.input_start_pos_from_filter_pos(
+						filter_input_grid.children().index(filter_pos_idx));
+
+				for (felt2::PosIdx local_pos_idx : convfelt::iter::pos_idx(filter))
+				{
+					const felt2::Vec3i input_pos =
+						input_pos_start + felt2::index(local_pos_idx, filter.size());
+
+					filter.set(local_pos_idx, image_grid.get(input_pos));
+				}
+			}
+
+			THEN("regions have expected values")
+			{
+				{
+					auto const & filter_input = filter_input_grid.children().get({0, 0, 0});
+					CHECK(filter_input.size() == filter_input_sizer.filter_size);
+
+					for (auto const & filter_grid_pos : convfelt::iter::pos(filter_input))
+					{
+						CAPTURE(filter_grid_pos);
+						CHECK(filter_input.get(filter_grid_pos) == image_grid.get(filter_grid_pos));
+					}
+				}
+				{
+					std::size_t num_nonzero = 0;
+					for (auto const & filter_input :
+						 convfelt::iter::val(filter_input_grid.children()))
+					{
+						CHECK(filter_input.size() == filter_input_sizer.filter_size);
+
+						for (auto const & [pos_idx, pos] :
+							 convfelt::iter::idx_and_pos(filter_input))
+						{
+							felt2::Vec3i const source_pos =
+								filter_input_sizer.source_pos_from_input_pos(pos);
+
+							CAPTURE(pos);
+							CAPTURE(source_pos);
+							CHECK(filter_input.get(pos_idx) == image_grid.get(source_pos));
+
+							if (filter_input.get(pos) != 0)
+								++num_nonzero;
+						}
+					}
+					CHECK(num_nonzero > 0);
+				}
+			}
+		}
+	}
+}
+
+SCENARIO("Basic SyCL usage")
+{
+	GIVEN("Input vectors")
+	{
+		std::vector<float> a = {1.f, 2.f, 3.f, 4.f, 5.f};
+		std::vector<float> b = {-1.f, 2.f, -3.f, 4.f, -5.f};
+		std::vector<float> c(a.size());
+		assert(a.size() == b.size());
+
+		WHEN("vectors are added using sycl")
+		{
+			{
+				sycl::queue q{sycl::gpu_selector_v};
+				sycl::range<1> work_items{a.size()};
+				sycl::buffer<float> buff_a(a.data(), a.size());
+				sycl::buffer<float> buff_b(b.data(), b.size());
+				sycl::buffer<float> buff_c(c.data(), c.size());
+
+				using Allocator = sycl::usm_allocator<float, sycl::usm::alloc::shared>;
+				std::vector<float, Allocator> vals(Allocator{q});
+				vals.push_back(1);
+				vals.push_back(2);
+
+				q.submit(
+					[&](sycl::handler & cgh)
+					{
+						auto access_a = buff_a.get_access<sycl::access::mode::read>(cgh);
+						auto access_b = buff_b.get_access<sycl::access::mode::read>(cgh);
+						auto access_c = buff_c.get_access<sycl::access::mode::write>(cgh);
+
+						cgh.parallel_for<class vector_add>(
+							work_items,
+							[=](sycl::id<1> tid)
+							{ access_c[tid] = access_a[tid] + access_b[tid] + vals[0] + vals[1]; });
+					});
+			}
+			THEN("result is as expected")
+			{
+				std::vector<float> expected = {3.f, 7.f, 3.f, 11.f, 3.f};
+
+				CHECK(c == expected);
+			}
+		}
+	}
+}
+
+SCENARIO("Basic oneMKL usage")
+{
+	GIVEN("Input vectors")
+	{
+		std::vector<float> a = {1.f, 2.f, 3.f, 4.f, 5.f};
+		std::vector<float> b = {-1.f, 2.f, -3.f, 4.f, -5.f};
+		assert(a.size() == b.size());
+
+		WHEN("vectors are added using oneMKL")
+		{
+			{
+				sycl::gpu_selector selector;
+				sycl::queue q{selector};
+				sycl::buffer<float> buff_a(a.data(), a.size());
+				sycl::buffer<float> buff_b(b.data(), b.size());
+
+				// NOTE: if a segfault happens here it's because the ERROR_MSG is nullptr, which
+				// means there are no enabled backend libraries.
+				oneapi::mkl::blas::column_major::axpy(
+					q, static_cast<long>(a.size()), 1.0f, buff_a, 1, buff_b, 1);
+			}
+			THEN("result is as expected")
+			{
+				std::vector<float> expected = {0.f, 4.f, 0.f, 8.f, 0.f};
+
+				CHECK(b == expected);
+			}
+		}
+	}
+}
+
+SCENARIO("SyCL with ConvGrid")
+{
+	GIVEN("Shared grid")
+	{
+		sycl::context ctx;
+		sycl::device dev{sycl::gpu_selector_v};
+		using ConvGrid = convfelt::ConvGridTD<float, 3, true>;
+
+		auto const pgrid = convfelt::make_unique_sycl<ConvGrid>(
+			dev, ctx, felt2::Vec3i{4, 4, 3}, felt2::Vec2i{2, 2}, ctx, dev);
+
+		std::fill(pgrid->data().begin(), pgrid->data().end(), 3);
+		CHECK(pgrid->children().data().size() > 1);
+		CHECK(pgrid->children().data()[0].data().size() > 1);
+		CHECK(&pgrid->children().data()[0].data()[0] == &pgrid->data()[0]);
+
+		WHEN("grid data is doubled using sycl")
+		{
+			sycl::range<1> work_items{pgrid->children().data().size()};
+
+			sycl::queue q{ctx, dev};
+			q.submit([&](sycl::handler & cgh)
+					 { cgh.prefetch(pgrid->data().data(), pgrid->data().size()); });
+			q.submit(
+				[&](sycl::handler & cgh) {
+					cgh.prefetch(pgrid->children().data().data(), pgrid->children().data().size());
+				});
+			q.submit(
+				[&](sycl::handler & cgh)
+				{
+					sycl::stream os{2048, 256, cgh};
+					pgrid->set_stream(&os);
+
+					cgh.parallel_for<class grid_mult>(
+						work_items,
+						[pgrid = pgrid.get()](sycl::id<1> tid)
+						{
+							for (auto & val : convfelt::iter::val(pgrid->children().get(tid)))
+								val *= 2;
+						});
+				});
+
+			pgrid->set_stream(nullptr);
+			// Host-side now, so should have stream no matter what.
+			CHECK(pgrid->has_stream());
+
+			pgrid->get_stream() << "Testing host-side streaming works\n";
+
+			q.wait_and_throw();
+			THEN("result is as expected")
+			{
+				for (auto const val : convfelt::iter::val(*pgrid)) CHECK(val == 6);
 			}
 		}
 	}
