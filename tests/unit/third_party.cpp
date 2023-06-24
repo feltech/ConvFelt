@@ -259,7 +259,6 @@ concept IsCallableWithFilterPos = requires(T t) {
 template <typename T>
 concept IsCallableWithPos = IsCallableWithGlobalPos<T> || IsCallableWithFilterPos<T>;
 
-
 /**
  * Calculate the position(s) in a grid of all filter inputs side-by-side that correspond to a given
  * position in the source image.
@@ -352,12 +351,11 @@ SCENARIO("Input/output ConvGrids")
 
 			FilterGrid filter_input_grid = [&image_grid, &filter_stride]
 			{
-				felt2::Vec2i const filter_input_window{4, 4};
 				felt2::Vec3i const filter_input_shape{4, 4, 3};
 				felt2::Vec3i const input_size = input_size_from_source_and_filter_size(
 					image_grid.size(), filter_input_shape, filter_stride);
 
-				return FilterGrid{input_size, filter_input_window};
+				return FilterGrid{input_size, filter_input_shape};
 			}();
 			const felt2::Vec3i filter_input_shape = filter_input_grid.child_size();
 
@@ -368,7 +366,6 @@ SCENARIO("Input/output ConvGrids")
 					(filter_input_grid.children().index(filter_pos_idx).array() *
 					 filter_stride.array())
 						.matrix();
-				(void)input_pos_start;
 
 				for (felt2::PosIdx local_pos_idx : convfelt::iter::pos_idx(filter))
 				{
@@ -401,12 +398,12 @@ SCENARIO("Input/output ConvGrids")
 						for (auto const & [pos_idx, pos] :
 							 convfelt::iter::idx_and_pos(filter_input))
 						{
-							felt2::Vec3i const image_grid_pos =
+							felt2::Vec3i const source_pos =
 								input_pos_to_source_pos(filter_input_shape, filter_stride, pos);
 
 							CAPTURE(pos);
-							CAPTURE(image_grid_pos);
-							CHECK(filter_input.get(pos_idx) == image_grid.get(image_grid_pos));
+							CAPTURE(source_pos);
+							CHECK(filter_input.get(pos_idx) == image_grid.get(source_pos));
 
 							if (filter_input.get(pos) != 0)
 								++num_nonzero;
@@ -948,10 +945,8 @@ SCENARIO("Transforming source image points to filter input grid points and vice 
 	}
 }
 
-
 SCENARIO("Applying filter to ConvGrid")
 {
-
 	GIVEN("a simple monochrome image file loaded with 1 pixel of zero padding")
 	{
 		static constexpr std::string_view file_path = CONVFELT_TEST_RESOURCE_DIR "/plus.png";
@@ -981,9 +976,6 @@ SCENARIO("Applying filter to ConvGrid")
 			felt2::Vec3i const filter_size{4, 4, 3};
 
 			felt2::Vec3i const input_size = input_size_from_source_and_filter_size(
-				image_grid.size(), filter_size, filter_stride);
-
-			auto const input_per_filter_size = input_per_filter_size_from_source_and_filter_size(
 				image_grid.size(), filter_size, filter_stride);
 
 			auto filter_input_grid = convfelt::make_unique_sycl<FilterGrid>(
@@ -1029,19 +1021,16 @@ SCENARIO("Applying filter to ConvGrid")
 
 						cgh.parallel_for<class grid_copy>(
 							work_items,
-							[input_size,
-							 filter_stride,
+							[filter_stride,
 							 filter_size,
-							 input_per_filter_size,
 							 image_grid_device = image_grid_device.get(),
 							 filter_input_grid_device =
 								 filter_input_grid_device.get()](sycl::item<1> item)
 							{
-								auto & filters = filter_input_grid_device->children();
+								auto & filter_inputs = filter_input_grid_device->children();
 
-								[[maybe_unused]] felt2::PosIdx const input_pos_idx =
-									item.get_linear_id();
-								[[maybe_unused]] felt2::Vec3i const source_pos =
+								felt2::PosIdx const input_pos_idx = item.get_linear_id();
+								felt2::Vec3i const source_pos =
 									image_grid_device->index(input_pos_idx);
 
 								felt2::Scalar const source_value =
@@ -1053,8 +1042,9 @@ SCENARIO("Applying filter to ConvGrid")
 									image_grid_device->size(),
 									source_pos,
 									[&](felt2::Vec3i const & filter_pos,
-										felt2::Vec3i const & global_pos)
-									{ filters.get(filter_pos).set(global_pos, source_value); });
+										felt2::Vec3i const & global_pos) {
+										filter_inputs.get(filter_pos).set(global_pos, source_value);
+									});
 							});
 					});
 				q.wait_and_throw();

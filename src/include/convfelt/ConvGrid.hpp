@@ -283,7 +283,6 @@ public:
 	using MatrixImpl = felt2::components::EigenMap<Traits, DataImpl>;
 
 private:
-
 	SizeImpl m_size_impl;
 	DataImpl m_data_impl{};
 	StreamImpl m_stream_impl{};
@@ -433,6 +432,9 @@ public:
 	ConvGridTD(const VecDi & size_, const VecDi & child_size_)
 		: ConvGridTD{size_, child_size_, {0, 0, 0}}
 	{
+		assert(
+			size_(D - 1) == child_size_(D - 1) &&
+			"Channel dimension must be equal for both image and filters");
 	}
 
 	ConvGridTD(
