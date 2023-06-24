@@ -588,7 +588,7 @@ template <
 struct AccessByValue
 {
 	/// Dimension of the grid.
-	static const Dim k_dims = Traits::k_dims;
+	static constexpr Dim k_dims = Traits::k_dims;
 	/// Type of data to store in grid nodes.
 	using Leaf = typename Traits::Leaf;
 	/// D-dimensional signed integer vector.
@@ -606,9 +606,7 @@ struct AccessByValue
 	 */
 	Leaf get(const VecDi & pos_) const noexcept
 	{
-#ifdef FELT2_DEBUG_ENABLED
-		m_assert_impl.assert_pos_bounds(pos_, "get: ");
-#endif
+		FELT2_DEBUG_CALL(m_assert_impl).assert_pos_bounds(pos_, "get: ");
 		const PosIdx idx = m_size_impl.index(pos_);
 		return get(idx);
 	}
@@ -621,9 +619,7 @@ struct AccessByValue
 	 */
 	Leaf get(const PosIdx pos_idx_) const noexcept
 	{
-#ifdef FELT2_DEBUG_ENABLED
-		m_assert_impl.assert_pos_idx_bounds(pos_idx_, "get: ");
-#endif
+		FELT2_DEBUG_CALL(m_assert_impl).assert_pos_idx_bounds(pos_idx_, "get: ");
 		return m_data_impl.data()[pos_idx_];
 	}
 
@@ -635,9 +631,7 @@ struct AccessByValue
 	 */
 	void set(const VecDi & pos_, Leaf val_)
 	{
-#ifdef FELT2_DEBUG_ENABLED
-		m_assert_impl.assert_pos_bounds(pos_, "set: ");
-#endif
+		FELT2_DEBUG_CALL(m_assert_impl).assert_pos_bounds(pos_, "set: ");
 		const PosIdx idx = m_size_impl.index(pos_);
 		set(idx, val_);
 	}

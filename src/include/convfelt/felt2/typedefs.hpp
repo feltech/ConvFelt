@@ -16,8 +16,10 @@
 
 #ifdef FELT2_DEBUG_ENABLED
 #define FELT2_DEBUG(...) __VA_ARGS__;
+#define FELT2_DEBUG_CALL(obj) obj
 #else
 #define FELT2_DEBUG(...)
+#define FELT2_DEBUG_CALL(obj) if (true) {} else obj
 #endif
 
 #define FELT2_FWD_COMPONENT_FN(comp, fn)\
