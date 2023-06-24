@@ -194,6 +194,24 @@ concept IsCallableWithPos = IsCallableWithGlobalPos<T> || IsCallableWithFilterPo
 
 struct FilterSizeHelper
 {
+	felt2::Vec3i const filter_size;
+	felt2::Vec3i const filter_stride;
+
+	felt2::Vec3i input_size_from_source_size(felt2::Vec3i const & source_size)
+	{
+		return input_size_from_source_and_filter_size(filter_size, filter_stride, source_size);
+	}
+
+	felt2::Vec3i input_start_pos_from_filter_pos(felt2::Vec3i const & filter_pos)
+	{
+		return (filter_pos.array() * filter_stride.array()).matrix();
+	}
+
+	felt2::Vec3i source_pos_from_input_pos(felt2::Vec3i const & input_pos)
+	{
+		return source_pos_from_input_pos_and_filter_size(filter_size, filter_stride, input_pos);
+	}
+
 	/**
 	 * Assuming we wish to construct a grid storing all filter inputs side-by-side, given a source
 	 * image size calculate how many distinct regions will need to be stacked side-by-side.
@@ -248,7 +266,7 @@ struct FilterSizeHelper
 	 * @param input_pos Position in grid of all filter inputs side-by-side.
 	 * @return
 	 */
-	static felt2::Vec3i input_pos_to_source_pos(
+	static felt2::Vec3i source_pos_from_input_pos_and_filter_size(
 		felt2::Vec3i const & filter_size,
 		felt2::Vec3i const & filter_stride,
 		felt2::Vec3i const & input_pos)
@@ -273,7 +291,7 @@ struct FilterSizeHelper
 	 * @param callback Callback to call, passing the positions in the filter input image that
 	 * correspond to the @p source_pos position in the source image..
 	 */
-	static void source_pos_to_input_pos(
+	static void input_pos_from_source_pos_and_filter_size(
 		felt2::Vec3i const & filter_size,
 		felt2::Vec3i const & filter_stride,
 		felt2::Vec3i const & source_size,
@@ -350,28 +368,21 @@ SCENARIO("Input/output ConvGrids")
 
 		WHEN("image is split into filter regions")
 		{
-			using FilterGrid = convfelt::ConvGrid;
+			[[maybe_unused]] FilterSizeHelper filter_input_sizer{
+				.filter_size = {4, 4, 3}, .filter_stride = {2, 2, 0}};
 
-			felt2::Vec3i const filter_stride{2, 2, 0};
+			convfelt::ConvGrid filter_input_grid{
+				filter_input_sizer.input_size_from_source_size(image_grid.size()),
+				filter_input_sizer.filter_size};
 
-			FilterGrid filter_input_grid = [&image_grid, &filter_stride]
-			{
-				felt2::Vec3i const filter_input_shape{4, 4, 3};
-				felt2::Vec3i const input_size =
-					FilterSizeHelper::input_size_from_source_and_filter_size(
-						filter_input_shape, filter_stride, image_grid.size());
-
-				return FilterGrid{input_size, filter_input_shape};
-			}();
-			const felt2::Vec3i filter_input_shape = filter_input_grid.child_size();
+			CHECK(filter_input_grid.child_size() == filter_input_sizer.filter_size);
 
 			for (auto const & [filter_pos_idx, filter] :
 				 convfelt::iter::idx_and_val(filter_input_grid.children()))
 			{
 				const felt2::Vec3i input_pos_start =
-					(filter_input_grid.children().index(filter_pos_idx).array() *
-					 filter_stride.array())
-						.matrix();
+					filter_input_sizer.input_start_pos_from_filter_pos(
+						filter_input_grid.children().index(filter_pos_idx));
 
 				for (felt2::PosIdx local_pos_idx : convfelt::iter::pos_idx(filter))
 				{
@@ -386,7 +397,7 @@ SCENARIO("Input/output ConvGrids")
 			{
 				{
 					auto const & filter_input = filter_input_grid.children().get({0, 0, 0});
-					CHECK(filter_input.size() == filter_input_shape);
+					CHECK(filter_input.size() == filter_input_sizer.filter_size);
 
 					for (auto const & filter_grid_pos : convfelt::iter::pos(filter_input))
 					{
@@ -399,14 +410,13 @@ SCENARIO("Input/output ConvGrids")
 					for (auto const & filter_input :
 						 convfelt::iter::val(filter_input_grid.children()))
 					{
-						CHECK(filter_input.size() == filter_input_shape);
+						CHECK(filter_input.size() == filter_input_sizer.filter_size);
 
 						for (auto const & [pos_idx, pos] :
 							 convfelt::iter::idx_and_pos(filter_input))
 						{
 							felt2::Vec3i const source_pos =
-								FilterSizeHelper::input_pos_to_source_pos(
-									filter_input_shape, filter_stride, pos);
+								filter_input_sizer.source_pos_from_input_pos(pos);
 
 							CAPTURE(pos);
 							CAPTURE(source_pos);
@@ -825,7 +835,8 @@ SCENARIO("Transforming source image points to filter input grid points and vice 
 		{
 			felt2::Vec3i const input_pos{0, 0, 0};
 			felt2::Vec3i const source_pos =
-				FilterSizeHelper::input_pos_to_source_pos(filter_size, filter_stride, input_pos);
+				FilterSizeHelper::source_pos_from_input_pos_and_filter_size(
+					filter_size, filter_stride, input_pos);
 
 			THEN("source pos is at minimum of source grid")
 			{
@@ -837,7 +848,8 @@ SCENARIO("Transforming source image points to filter input grid points and vice 
 		{
 			felt2::Vec3i const input_pos{5, 3, 3};
 			felt2::Vec3i const source_pos =
-				FilterSizeHelper::input_pos_to_source_pos(filter_size, filter_stride, input_pos);
+				FilterSizeHelper::source_pos_from_input_pos_and_filter_size(
+					filter_size, filter_stride, input_pos);
 
 			THEN("source pos is at maximum of source grid")
 			{
@@ -851,7 +863,7 @@ SCENARIO("Transforming source image points to filter input grid points and vice 
 
 			using PosArray = std::vector<felt2::Vec3i>;
 			PosArray input_pos_list;
-			FilterSizeHelper::source_pos_to_input_pos(
+			FilterSizeHelper::input_pos_from_source_pos_and_filter_size(
 				filter_size,
 				filter_stride,
 				source_size,
@@ -871,7 +883,7 @@ SCENARIO("Transforming source image points to filter input grid points and vice 
 
 			using PosArray = std::vector<felt2::Vec3i>;
 			PosArray input_pos_list;
-			FilterSizeHelper::source_pos_to_input_pos(
+			FilterSizeHelper::input_pos_from_source_pos_and_filter_size(
 				filter_size,
 				filter_stride,
 				source_size,
@@ -891,7 +903,7 @@ SCENARIO("Transforming source image points to filter input grid points and vice 
 
 			using PosArray = std::vector<felt2::Vec3i>;
 			PosArray input_pos_list;
-			FilterSizeHelper::source_pos_to_input_pos(
+			FilterSizeHelper::input_pos_from_source_pos_and_filter_size(
 				filter_size,
 				filter_stride,
 				source_size,
@@ -911,7 +923,7 @@ SCENARIO("Transforming source image points to filter input grid points and vice 
 			using PosArray = std::vector<felt2::Vec3i>;
 			PosArray filter_pos_list;
 			PosArray global_pos_list;
-			FilterSizeHelper::source_pos_to_input_pos(
+			FilterSizeHelper::input_pos_from_source_pos_and_filter_size(
 				filter_size,
 				filter_stride,
 				source_size,
@@ -1025,7 +1037,7 @@ SCENARIO("Applying filter to ConvGrid")
 								felt2::Scalar const source_value =
 									image_grid_device->get(input_pos_idx);
 
-								FilterSizeHelper::source_pos_to_input_pos(
+								FilterSizeHelper::input_pos_from_source_pos_and_filter_size(
 									filter_size,
 									filter_stride,
 									image_grid_device->size(),
