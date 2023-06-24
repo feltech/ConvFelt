@@ -98,4 +98,4 @@ bool inside(const TPos & pos_, const TBounds & pos_min_, const TBounds & pos_max
 	}
 	return true;
 }
-}
+}  // namespace felt2

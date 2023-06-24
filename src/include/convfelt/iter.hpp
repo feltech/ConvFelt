@@ -2,8 +2,8 @@
 #include <concepts>
 #include <cstddef>
 
-#include "felt2/typedefs.hpp"
 #include "felt2/index.hpp"
+#include "felt2/typedefs.hpp"
 
 #include <cppcoro/generator.hpp>
 #include <range/v3/view/enumerate.hpp>
@@ -34,10 +34,10 @@ concept Grid = requires(T v)
 };
 
 template <typename T>
-concept GridWithData = requires(T v)
+concept GridWithStorage = requires(T v)
 {
 	requires Grid<T>;
-	{v.data().size()} -> std::same_as<felt2::PosIdx>;
+	{v.storage().size()} -> std::same_as<felt2::PosIdx>;
 };
 // clang-format on
 }  // namespace detail
@@ -47,7 +47,7 @@ template <typename T>
 concept Grid = requires(T) { requires detail::Grid<std::decay_t<T>>; };
 
 template <typename T>
-concept GridWithData = requires(T) { requires detail::GridWithData<std::decay_t<T>>; };
+concept GridWithStorage = requires(T) { requires detail::GridWithStorage<std::decay_t<T>>; };
 
 template <typename T>
 concept Integral = requires { ranges::integral<std::decay<T>>; };
@@ -56,14 +56,14 @@ concept Integral = requires { ranges::integral<std::decay<T>>; };
 
 namespace iter
 {
-static constexpr auto idx(concepts::Integral auto ... args)
+static constexpr auto idx(concepts::Integral auto... args)
 {
 	return ranges::views::indices(std::forward<decltype(args)>(args)...);
 };
 
-static constexpr auto pos_idx(concepts::GridWithData auto & grid)
+static constexpr auto pos_idx(concepts::GridWithStorage auto & grid)
 {
-	return idx(grid.data().size());
+	return idx(grid.storage().size());
 };
 
 static inline auto pos(concepts::Grid auto & grid)
@@ -88,14 +88,14 @@ static inline auto idx_and_pos(concepts::Grid auto & grid)
 	}
 };
 
-static constexpr decltype(auto) val(concepts::GridWithData auto & grid)
+static constexpr decltype(auto) val(concepts::GridWithStorage auto & grid)
 {
-	return grid.data();
+	return grid.storage();
 };
 
-static constexpr decltype(auto) idx_and_val(concepts::GridWithData auto & grid)
+static constexpr decltype(auto) idx_and_val(concepts::GridWithStorage auto & grid)
 {
-	return ranges::views::enumerate(grid.data());
+	return ranges::views::enumerate(grid.storage());
 };
 
 }  // namespace iter

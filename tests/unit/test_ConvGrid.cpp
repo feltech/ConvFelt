@@ -8,7 +8,7 @@
 #include <convfelt/ConvGrid.hpp>
 #include <convfelt/iter.hpp>
 
-SCENARIO("Populaing ConvGrid filter partitions using common data storage")
+SCENARIO("Populating ConvGrid filter partitions using common data storage")
 {
 	GIVEN("a ConvGrid of size (10,10,3) with 2x2 filter partitions")
 	{

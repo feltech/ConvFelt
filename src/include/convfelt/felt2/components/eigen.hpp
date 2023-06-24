@@ -8,7 +8,7 @@
 
 namespace felt2::components
 {
-template <HasLeafType Traits, HasData Data>
+template <HasLeafType Traits, HasStorage Storage>
 struct EigenMap
 {
 	/// Type of data to store in grid nodes.
@@ -17,7 +17,7 @@ struct EigenMap
 	using ArrayColMap = Eigen::Map<Eigen::Array<Leaf, 1, Eigen::Dynamic>>;
 	using MatrixRowMap = Eigen::Map<Eigen::Matrix<Leaf, Eigen::Dynamic, 1>>;
 
-	Data const & m_data_impl;
+	Storage const & m_storage_impl;
 
 	/**
 	 * Map the raw data to a (column-major) Eigen::Map, which can be used for BLAS arithmetic.
@@ -26,7 +26,8 @@ struct EigenMap
 	 */
 	ArrayColMap array() noexcept
 	{
-		return ArrayColMap(m_data_impl.data().data(), Eigen::Index(m_data_impl.data().size()));
+		return ArrayColMap(
+			m_storage_impl.storage().data(), Eigen::Index(m_storage_impl.storage().size()));
 	}
 	/**
 	 * Map the raw data to a (row-major) Eigen::Map, which can be used for BLAS arithmetic.
@@ -35,16 +36,18 @@ struct EigenMap
 	 */
 	MatrixRowMap matrix() noexcept
 	{
-		return MatrixRowMap(m_data_impl.data().data(), Eigen::Index(m_data_impl.data().size()));
+		return MatrixRowMap(
+			m_storage_impl.storage().data(), Eigen::Index(m_storage_impl.storage().size()));
 	}
 
 	MatrixRowMap matrix() const noexcept
 	{
-		return MatrixRowMap(m_data_impl.data().data(), Eigen::Index(m_data_impl.data().size()));
+		return MatrixRowMap(
+			m_storage_impl.storage().data(), Eigen::Index(m_storage_impl.storage().size()));
 	}
 };
 
-template <HasLeafType Traits, HasData Data, HasChildrenSize ChildrenSize>
+template <HasLeafType Traits, HasStorage Data, HasChildrenSize ChildrenSize>
 struct EigenColMajor2DMap
 {
 	/// Type of data to store in grid nodes.
@@ -63,7 +66,7 @@ struct EigenColMajor2DMap
 	MatrixMap matrix() noexcept
 	{
 		return {
-			m_data_impl.data().data(),
+			m_data_impl.storage().data(),
 			Eigen::Index(m_children_size_impl.num_elems_per_child()),
 			Eigen::Index(m_children_size_impl.num_children())};
 	}
@@ -71,7 +74,7 @@ struct EigenColMajor2DMap
 	MatrixMap matrix() const noexcept
 	{
 		return {
-			m_data_impl.data().data(),
+			m_data_impl.storage().data(),
 			Eigen::Index(m_children_size_impl.num_elems_per_child()),
 			Eigen::Index(m_children_size_impl.num_children())};
 	}

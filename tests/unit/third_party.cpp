@@ -109,7 +109,7 @@ SCENARIO("Using OpenImageIO with cppcoro and loading into Felt grid")
 					{0, 0, 0},
 					0};
 
-				OIIO::ImageBuf image_grid_buf{image_grid_spec, image_grid.data().data()};
+				OIIO::ImageBuf image_grid_buf{image_grid_spec, image_grid.storage().data()};
 				OIIO::ImageBufAlgo::paste(image_grid_buf, 0, 0, 0, 0, image);
 
 				THEN("grid contains image")
@@ -140,7 +140,7 @@ SCENARIO("Using OpenImageIO with cppcoro and loading into Felt grid")
 					{0, 0, 0},
 					0};
 
-				OIIO::ImageBuf image_grid_buf{image_grid_spec, image_grid.data().data()};
+				OIIO::ImageBuf image_grid_buf{image_grid_spec, image_grid.storage().data()};
 				OIIO::ImageBufAlgo::paste(image_grid_buf, 1, 1, 0, 0, image);
 
 				THEN("grid contains padded image")
@@ -579,7 +579,7 @@ SCENARIO("Transforming source image points to filter input grid points and vice 
 				FilterSizeHelper::input_per_filter_size_from_source_and_filter_size(
 					filter_size, filter_stride, source_size);
 
-			THEN("output size is calculated correctly")
+			THEN("only one stamp is required")
 			{
 				CHECK(size == felt2::Vec3i{1, 1, 1});
 			}
@@ -741,7 +741,7 @@ SCENARIO("Input/output ConvGrids")
 			{0, 0, 0},
 			0};
 
-		OIIO::ImageBuf image_grid_buf{image_grid_spec, image_grid.data().data()};
+		OIIO::ImageBuf image_grid_buf{image_grid_spec, image_grid.storage().data()};
 		OIIO::ImageBufAlgo::paste(image_grid_buf, 1, 1, 0, 0, image);
 
 		WHEN("image is split into filter regions")
@@ -899,21 +899,22 @@ SCENARIO("SyCL with ConvGrid")
 		auto const pgrid = convfelt::make_unique_sycl<ConvGrid>(
 			dev, ctx, felt2::Vec3i{4, 4, 3}, felt2::Vec2i{2, 2}, ctx, dev);
 
-		std::fill(pgrid->data().begin(), pgrid->data().end(), 3);
-		CHECK(pgrid->children().data().size() > 1);
-		CHECK(pgrid->children().data()[0].data().size() > 1);
-		CHECK(&pgrid->children().data()[0].data()[0] == &pgrid->data()[0]);
+		std::fill(pgrid->storage().begin(), pgrid->storage().end(), 3);
+		CHECK(pgrid->children().storage().size() > 1);
+		CHECK(pgrid->children().storage()[0].storage().size() > 1);
+		CHECK(&pgrid->children().storage()[0].storage()[0] == &pgrid->storage()[0]);
 
 		WHEN("grid data is doubled using sycl")
 		{
-			sycl::range<1> work_items{pgrid->children().data().size()};
+			sycl::range<1> work_items{pgrid->children().storage().size()};
 
 			sycl::queue q{ctx, dev};
 			q.submit([&](sycl::handler & cgh)
-					 { cgh.prefetch(pgrid->data().data(), pgrid->data().size()); });
+					 { cgh.prefetch(pgrid->storage().data(), pgrid->storage().size()); });
 			q.submit(
 				[&](sycl::handler & cgh) {
-					cgh.prefetch(pgrid->children().data().data(), pgrid->children().data().size());
+					cgh.prefetch(
+						pgrid->children().storage().data(), pgrid->children().storage().size());
 				});
 			q.submit(
 				[&](sycl::handler & cgh)
@@ -962,7 +963,7 @@ SCENARIO("Applying filter to ConvGrid")
 			{0, 0, 0},
 			0};
 
-		OIIO::ImageBuf image_grid_buf{image_grid_spec, image_grid.data().data()};
+		OIIO::ImageBuf image_grid_buf{image_grid_spec, image_grid.storage().data()};
 		OIIO::ImageBufAlgo::paste(image_grid_buf, 1, 1, 0, 0, image);
 
 		AND_GIVEN("image is split into filter regions")
@@ -1005,12 +1006,12 @@ SCENARIO("Applying filter to ConvGrid")
 					convfelt::make_unique_sycl<convfelt::ByValue<felt2::Scalar, 3, true>>(
 						dev, ctx, image_grid.size(), image_grid.offset(), 0.0f, ctx, dev);
 
-				image_grid_device->data().assign(
-					image_grid.data().begin(), image_grid.data().end());
+				image_grid_device->storage().assign(
+					image_grid.storage().begin(), image_grid.storage().end());
 
 				auto filter_input_grid_device = convfelt::make_unique_sycl<FilterGrid>(
 					dev, ctx, input_size, filter_size.head<2>(), ctx, dev);
-				sycl::range<1> work_items{image_grid_device->data().size()};
+				sycl::range<1> work_items{image_grid_device->storage().size()};
 				sycl::queue q{ctx, dev};
 
 				q.submit(
@@ -1056,11 +1057,11 @@ SCENARIO("Applying filter to ConvGrid")
 						filter_input_grid->children().size() ==
 						filter_input_grid_device->children().size());
 					CHECK(
-						filter_input_grid->data().size() ==
-						filter_input_grid_device->data().size());
+						filter_input_grid->storage().size() ==
+						filter_input_grid_device->storage().size());
 					CHECK(
-						filter_input_grid->children().data().size() ==
-						filter_input_grid_device->children().data().size());
+						filter_input_grid->children().storage().size() ==
+						filter_input_grid_device->children().storage().size());
 
 					for (felt2::PosIdx child_pos_idx :
 						 convfelt::iter::pos_idx(filter_input_grid->children()))
@@ -1072,9 +1073,9 @@ SCENARIO("Applying filter to ConvGrid")
 
 						CHECK(expected_child.size() == actual_child.size());
 						CHECK(expected_child.offset() == actual_child.offset());
-						CHECK(expected_child.data().size() == actual_child.data().size());
+						CHECK(expected_child.storage().size() == actual_child.storage().size());
 
-						CHECK(std::ranges::equal(expected_child.data(), actual_child.data()));
+						CHECK(std::ranges::equal(expected_child.storage(), actual_child.storage()));
 						//						for (felt2::PosIdx leaf_pos_idx :
 						// convfelt::iter::pos_idx(actual_child))
 						//						{
@@ -1136,9 +1137,9 @@ SCENARIO("Applying filter to ConvGrid")
 
 				WHEN("filter is applied to grid using Eigen in a hand-rolled kernel")
 				{
-					sycl::range<1> work_items{filter_input_grid->children().data().size()};
+					sycl::range<1> work_items{filter_input_grid->children().storage().size()};
 					sycl::nd_range<1> work_range{
-						filter_output_grid->data().size(),
+						filter_output_grid->storage().size(),
 						static_cast<size_t>(filter_output_grid->child_size().prod())};
 					sycl::queue q{ctx, dev};
 
@@ -1175,23 +1176,23 @@ SCENARIO("Applying filter to ConvGrid")
 									auto & output_child =
 										filter_output_grid->children().get(group_id);
 
-									assert(input_child.data().size() == input_child_data.size());
-									assert(local_id < output_child.data().size());
+									assert(input_child.storage().size() == input_child_data.size());
+									assert(local_id < output_child.storage().size());
 
 									item.async_work_group_copy(
 											input_child_data.get_pointer(),
 											sycl::global_ptr<felt2::Scalar>{
-												input_child.data().data()},
-											input_child.data().size())
+												input_child.storage().data()},
+											input_child.storage().size())
 										.wait();
 
 									ColVectorMap const input_vec{
 										input_child_data.get_pointer().get(),
-										Eigen::Index(input_child.data().size()),
+										Eigen::Index(input_child.storage().size()),
 										1};
 									ColVectorMap output_vec{
-										output_child.data().data(),
-										Eigen::Index(output_child.data().size()),
+										output_child.storage().data(),
+										Eigen::Index(output_child.storage().size()),
 										1};
 
 									auto const row_idx = static_cast<Eigen::Index>(local_id);

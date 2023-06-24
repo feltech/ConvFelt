@@ -3,7 +3,7 @@
 #pragma once
 
 /// Format Eigen vectors as row vectors, i.e. "(1,3,2)".
-//#define EIGEN_DEFAULT_IO_FORMAT Eigen::IOFormat(3, DontAlignCols, " ", ",", "", "", "(", ")")
+// #define EIGEN_DEFAULT_IO_FORMAT Eigen::IOFormat(3, DontAlignCols, " ", ",", "", "", "(", ")")
 
 #include <limits>
 
@@ -19,41 +19,45 @@
 #define FELT2_DEBUG_CALL(obj) obj
 #else
 #define FELT2_DEBUG(...)
-#define FELT2_DEBUG_CALL(obj) if (true) {} else obj
+#define FELT2_DEBUG_CALL(obj) \
+	if (true)                 \
+	{                         \
+	}                         \
+	else                      \
+		obj
 #endif
 
-#define FELT2_FWD_COMPONENT_FN(comp, fn)\
-decltype(auto) fn(auto &&... args)\
-{\
-	return comp.fn(std::forward<decltype(args)>(args)...);\
-}\
-decltype(auto) fn(auto &&... args) const\
-{\
-	return comp.fn(std::forward<decltype(args)>(args)...);\
-}
+#define FELT2_FWD_COMPONENT_FN(comp, fn)                       \
+	decltype(auto) fn(auto &&... args)                         \
+	{                                                          \
+		return comp.fn(std::forward<decltype(args)>(args)...); \
+	}                                                          \
+	decltype(auto) fn(auto &&... args) const                   \
+	{                                                          \
+		return comp.fn(std::forward<decltype(args)>(args)...); \
+	}
 
-#define FELT2_FWD_COMPONENT_FN_NOEXCEPT(comp, fn)\
-decltype(auto) fn(auto &&... args) noexcept\
-{\
-	return comp.fn(std::forward<decltype(args)>(args)...);\
-}\
-decltype(auto) fn(auto &&... args) const noexcept\
-{\
-	return comp.fn(std::forward<decltype(args)>(args)...);\
-}
+#define FELT2_FWD_COMPONENT_FN_NOEXCEPT(comp, fn)              \
+	decltype(auto) fn(auto &&... args) noexcept                \
+	{                                                          \
+		return comp.fn(std::forward<decltype(args)>(args)...); \
+	}                                                          \
+	decltype(auto) fn(auto &&... args) const noexcept          \
+	{                                                          \
+		return comp.fn(std::forward<decltype(args)>(args)...); \
+	}
 
-#define FELT2_FWD_COMPONENT_FN_CONST(comp, fn)\
-decltype(auto) fn(auto &&... args) const\
-{\
-	return comp.fn(std::forward<decltype(args)>(args)...);\
-}
+#define FELT2_FWD_COMPONENT_FN_CONST(comp, fn)                 \
+	decltype(auto) fn(auto &&... args) const                   \
+	{                                                          \
+		return comp.fn(std::forward<decltype(args)>(args)...); \
+	}
 
-#define FELT2_FWD_COMPONENT_FN_CONST_NOEXCEPT(comp, fn)\
-decltype(auto) fn(auto &&... args) const noexcept\
-{\
-	return comp.fn(std::forward<decltype(args)>(args)...);\
-}
-
+#define FELT2_FWD_COMPONENT_FN_CONST_NOEXCEPT(comp, fn)        \
+	decltype(auto) fn(auto &&... args) const noexcept          \
+	{                                                          \
+		return comp.fn(std::forward<decltype(args)>(args)...); \
+	}
 
 namespace felt2
 {
@@ -118,4 +122,4 @@ using Vec3u = VecDu<3>;
  * Shorthand for 3D integer vector.
  */
 using Vec3i = VecDi<3>;
-}
+}  // namespace felt2

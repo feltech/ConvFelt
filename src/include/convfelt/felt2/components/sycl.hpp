@@ -21,12 +21,12 @@ struct USMDataArray
 	Allocator m_allocator;
 	Array m_data{m_allocator};
 
-	Array & data()
+	Array & storage()
 	{
 		return m_data;
 	}
 
-	const Array & data() const
+	Array const & storage() const
 	{
 		return m_data;
 	}
@@ -67,7 +67,7 @@ struct Stream
 	}
 #endif
 
-	void set_stream(sycl::stream* stream)
+	void set_stream(sycl::stream * stream)
 	{
 		m_stream = stream;
 	}
