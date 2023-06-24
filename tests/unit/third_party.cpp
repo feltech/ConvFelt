@@ -175,6 +175,16 @@ SCENARIO("Using OpenImageIO with cppcoro and loading into Felt grid")
 	}
 }
 
+/**
+ * Assuming we wish to construct a grid storing all filter inputs side-by-side, given a source image
+ * size calculate how many distinct regions will need to be stacked side-by-side.
+ *
+ * @param source_size Size of source image.
+ * @param filter_size Size of filter to walk across source image.
+ * @param filter_stride Size of each step as the filter walks across the source image.
+ * @return Number of regions (along each dimension) stamped out by the filter after it has walked
+ * the source image.
+ */
 felt2::Vec3i input_per_filter_size_from_source_and_filter_size(
 	felt2::Vec3i const & source_size,
 	felt2::Vec3i const & filter_size,
@@ -189,6 +199,15 @@ felt2::Vec3i input_per_filter_size_from_source_and_filter_size(
 	return input_per_filter_size;
 }
 
+/**
+ * Assuming we wish to construct a grid storing all filter inputs side-by-side, given a source image
+ * size calculate how large the grid of filter inputs must be.
+ *
+ * @param source_size Size of source image.
+ * @param filter_size Size of filter to walk across source image.
+ * @param filter_stride Size of each step as the filter walks across the source image.
+ * @return Required size to store all filter inputs side-by-side.
+ */
 felt2::Vec3i input_size_from_source_and_filter_size(
 	felt2::Vec3i const & source_size,
 	felt2::Vec3i const & filter_size,
@@ -200,6 +219,15 @@ felt2::Vec3i input_size_from_source_and_filter_size(
 	return (input_per_filter_size.array() * filter_size.array()).matrix();
 }
 
+/**
+ * Assuming a grid of all filter inputs side-by-side, given a position in this grid, get the
+ * corresponding position in the source image that the filter input element was copied from.
+ *
+ * @param filter_size Size of filter to walk across source image.
+ * @param filter_stride Size of each step as the filter walks across the source image.
+ * @param input_pos Position in grid of all filter inputs side-by-side.
+ * @return
+ */
 felt2::Vec3i input_pos_to_source_pos(
 	felt2::Vec3i const & filter_size,
 	felt2::Vec3i const & filter_stride,
@@ -231,13 +259,23 @@ concept IsCallableWithFilterPos = requires(T t) {
 template <typename T>
 concept IsCallableWithPos = IsCallableWithGlobalPos<T> || IsCallableWithFilterPos<T>;
 
+
+/**
+ * Calculate the position(s) in a grid of all filter inputs side-by-side that correspond to a given
+ * position in the source image.
+ *
+ * @param filter_size Size of filter to walk across source image.
+ * @param filter_stride Size of each step as the filter walks across the source image.
+ * @param source_size Size of source image.
+ * @param source_pos Position within source image.
+ * @param callback Callback to call, passing the positions in the filter input image that
+ * correspond to the @p source_pos position in the source image..
+ */
 void source_pos_to_input_pos(
-	[[maybe_unused]] felt2::Vec3i const & input_size,
-	[[maybe_unused]] felt2::Vec3i const & filter_size,
-	[[maybe_unused]] felt2::Vec3i const & filter_stride,
-	[[maybe_unused]] felt2::Vec3i const & source_size,
-	[[maybe_unused]] felt2::Vec3i const & input_per_filter_size,
-	[[maybe_unused]] felt2::Vec3i const & source_pos,
+	felt2::Vec3i const & filter_size,
+	felt2::Vec3i const & filter_stride,
+	felt2::Vec3i const & source_size,
+	felt2::Vec3i const & source_pos,
 	IsCallableWithPos auto && callback)
 {
 	auto one = felt2::Vec3i::Constant(1);
@@ -550,7 +588,7 @@ SCENARIO("SyCL with ConvGrid")
 	}
 }
 
-SCENARIO("Applying filter to ConvGrid")
+SCENARIO("Transforming source image points to filter input grid points and vice versa")
 {
 	GIVEN("stride size 3x3, filter size 3x3 and image size 3x3 with 4 channels")
 	{
@@ -559,12 +597,12 @@ SCENARIO("Applying filter to ConvGrid")
 
 		felt2::Vec3i const source_size{3, 3, 4};
 
-		WHEN("number of required filters is calculated")
+		WHEN("number of required filter stamps is calculated")
 		{
 			felt2::Vec3i const size = input_per_filter_size_from_source_and_filter_size(
 				source_size, filter_size, filter_stride);
 
-			THEN("output size is calculated correctly")
+			THEN("only one stamp is required")
 			{
 				CHECK(size == felt2::Vec3i{1, 1, 1});
 			}
@@ -574,7 +612,7 @@ SCENARIO("Applying filter to ConvGrid")
 			felt2::Vec3i const input_size =
 				input_size_from_source_and_filter_size(source_size, filter_size, filter_stride);
 
-			THEN("input size is calculated correctly")
+			THEN("input size is same as source size")
 			{
 				CHECK(input_size == felt2::Vec3i{3, 3, 4});
 			}
@@ -588,12 +626,12 @@ SCENARIO("Applying filter to ConvGrid")
 
 		felt2::Vec3i const source_size{3, 3, 4};
 
-		WHEN("number of required filters is calculated")
+		WHEN("number of required filter stamps is calculated")
 		{
 			felt2::Vec3i const size = input_per_filter_size_from_source_and_filter_size(
 				source_size, filter_size, filter_stride);
 
-			THEN("output size is calculated correctly")
+			THEN("only one stamp is required")
 			{
 				CHECK(size == felt2::Vec3i{1, 1, 1});
 			}
@@ -603,7 +641,7 @@ SCENARIO("Applying filter to ConvGrid")
 			felt2::Vec3i const input_size =
 				input_size_from_source_and_filter_size(source_size, filter_size, filter_stride);
 
-			THEN("input size is calculated correctly")
+			THEN("input size is same as source size")
 			{
 				CHECK(input_size == felt2::Vec3i{3, 3, 4});
 			}
@@ -622,7 +660,7 @@ SCENARIO("Applying filter to ConvGrid")
 			felt2::Vec3i const size = input_per_filter_size_from_source_and_filter_size(
 				source_size, filter_size, filter_stride);
 
-			THEN("output size is calculated correctly")
+			THEN("only one stamp is required")
 			{
 				CHECK(size == felt2::Vec3i{1, 1, 1});
 			}
@@ -632,7 +670,7 @@ SCENARIO("Applying filter to ConvGrid")
 			felt2::Vec3i const input_size =
 				input_size_from_source_and_filter_size(source_size, filter_size, filter_stride);
 
-			THEN("input size is calculated correctly")
+			THEN("input size is same as source size")
 			{
 				CHECK(input_size == felt2::Vec3i{3, 3, 4});
 			}
@@ -646,12 +684,12 @@ SCENARIO("Applying filter to ConvGrid")
 
 		felt2::Vec3i const source_size{3, 3, 4};
 
-		WHEN("number of required filters is calculated")
+		WHEN("number of required filter stamps is calculated")
 		{
 			felt2::Vec3i const size = input_per_filter_size_from_source_and_filter_size(
 				source_size, filter_size, filter_stride);
 
-			THEN("output size is calculated correctly")
+			THEN("3 stamps in each direction is required")
 			{
 				CHECK(size == felt2::Vec3i{3, 3, 1});
 			}
@@ -661,7 +699,7 @@ SCENARIO("Applying filter to ConvGrid")
 			felt2::Vec3i const input_size =
 				input_size_from_source_and_filter_size(source_size, filter_size, filter_stride);
 
-			THEN("input size is calculated correctly")
+			THEN("input grid size is same as source size")
 			{
 				// Total size is same as input, but every 1x1 window is a separate filter.
 				CHECK(input_size == felt2::Vec3i{3, 3, 4});
@@ -676,12 +714,12 @@ SCENARIO("Applying filter to ConvGrid")
 
 		felt2::Vec3i const source_size{4, 4, 4};
 
-		WHEN("number of required filters is calculated")
+		WHEN("number of required filter stamps is calculated")
 		{
 			felt2::Vec3i const size = input_per_filter_size_from_source_and_filter_size(
 				source_size, filter_size, filter_stride);
 
-			THEN("output size is calculated correctly")
+			THEN("2 stamps in each direction is required")
 			{
 				CHECK(size == felt2::Vec3i{2, 2, 1});
 			}
@@ -691,7 +729,7 @@ SCENARIO("Applying filter to ConvGrid")
 			felt2::Vec3i const input_size =
 				input_size_from_source_and_filter_size(source_size, filter_size, filter_stride);
 
-			THEN("input size is calculated correctly")
+			THEN("input grid size is same as source size")
 			{
 				CHECK(input_size == felt2::Vec3i{4, 4, 4});
 			}
@@ -705,12 +743,12 @@ SCENARIO("Applying filter to ConvGrid")
 
 		felt2::Vec3i const source_size{4, 4, 4};
 
-		WHEN("number of required filters is calculated")
+		WHEN("number of required filter stamps is calculated")
 		{
 			felt2::Vec3i const size = input_per_filter_size_from_source_and_filter_size(
 				source_size, filter_size, filter_stride);
 
-			THEN("output size is calculated correctly")
+			THEN("3 horizontal and 2 vertical stamps are required")
 			{
 				CHECK(size == felt2::Vec3i{3, 2, 1});
 			}
@@ -720,7 +758,7 @@ SCENARIO("Applying filter to ConvGrid")
 			felt2::Vec3i const input_size =
 				input_size_from_source_and_filter_size(source_size, filter_size, filter_stride);
 
-			THEN("input size is calculated correctly")
+			THEN("input grid size is larger than source to accommodate overlapping filter stamps")
 			{
 				CHECK(input_size == felt2::Vec3i{6, 4, 4});
 			}
@@ -734,12 +772,12 @@ SCENARIO("Applying filter to ConvGrid")
 
 		felt2::Vec3i const source_size{3, 3, 4};
 
-		WHEN("number of required filters is calculated")
+		WHEN("number of required filter stamps is calculated")
 		{
 			felt2::Vec3i const size = input_per_filter_size_from_source_and_filter_size(
 				source_size, filter_size, filter_stride);
 
-			THEN("output size is calculated correctly")
+			THEN("only one stamp is required")
 			{
 				CHECK(size == felt2::Vec3i{1, 1, 1});
 			}
@@ -749,7 +787,7 @@ SCENARIO("Applying filter to ConvGrid")
 			felt2::Vec3i const input_size =
 				input_size_from_source_and_filter_size(source_size, filter_size, filter_stride);
 
-			THEN("input size is calculated correctly")
+			THEN("input grid size is same as source size")
 			{
 				CHECK(input_size == felt2::Vec3i{3, 3, 4});
 			}
@@ -763,7 +801,7 @@ SCENARIO("Applying filter to ConvGrid")
 
 		felt2::Vec3i const source_size{3, 3, 4};
 
-		WHEN("number of required filters is calculated")
+		WHEN("number of required filter stamps is calculated")
 		{
 			felt2::Vec3i const size = input_per_filter_size_from_source_and_filter_size(
 				source_size, filter_size, filter_stride);
@@ -778,7 +816,7 @@ SCENARIO("Applying filter to ConvGrid")
 			felt2::Vec3i const input_size =
 				input_size_from_source_and_filter_size(source_size, filter_size, filter_stride);
 
-			THEN("input size is calculated correctly")
+			THEN("input grid size is too small due to stride step going out of bounds")
 			{
 				// Filter(s) doesn't cover input - should warn/abort.
 				CHECK(input_size == felt2::Vec3i{3, 2, 4});
@@ -793,9 +831,6 @@ SCENARIO("Applying filter to ConvGrid")
 
 		felt2::Vec3i const source_size{4, 4, 4};
 
-		felt2::Vec3i const input_per_filter_size =
-			input_per_filter_size_from_source_and_filter_size(
-				source_size, filter_size, filter_stride);
 		felt2::Vec3i const input_size =
 			input_size_from_source_and_filter_size(source_size, filter_size, filter_stride);
 
@@ -807,7 +842,7 @@ SCENARIO("Applying filter to ConvGrid")
 			felt2::Vec3i const source_pos =
 				input_pos_to_source_pos(filter_size, filter_stride, input_pos);
 
-			THEN("position is as expected")
+			THEN("source pos is at minimum of source grid")
 			{
 				CHECK(source_pos == felt2::Vec3i{0, 0, 0});
 			}
@@ -819,7 +854,7 @@ SCENARIO("Applying filter to ConvGrid")
 			felt2::Vec3i const source_pos =
 				input_pos_to_source_pos(filter_size, filter_stride, input_pos);
 
-			THEN("position is as expected")
+			THEN("source pos is at maximum of source grid")
 			{
 				CHECK(source_pos == felt2::Vec3i{3, 3, 3});
 			}
@@ -832,15 +867,13 @@ SCENARIO("Applying filter to ConvGrid")
 			using PosArray = std::vector<felt2::Vec3i>;
 			PosArray input_pos_list;
 			source_pos_to_input_pos(
-				input_size,
 				filter_size,
 				filter_stride,
 				source_size,
-				input_per_filter_size,
 				source_pos,
 				[&](const felt2::Vec3i & pos) { input_pos_list.push_back(pos); });
 
-			THEN("positions care as expected")
+			THEN("source point maps to a single input grid point at the minimum of the input grid")
 			{
 				CAPTURE(input_pos_list);
 				CHECK(std::ranges::equal(input_pos_list, PosArray{felt2::Vec3i{0, 0, 0}}));
@@ -854,15 +887,13 @@ SCENARIO("Applying filter to ConvGrid")
 			using PosArray = std::vector<felt2::Vec3i>;
 			PosArray input_pos_list;
 			source_pos_to_input_pos(
-				input_size,
 				filter_size,
 				filter_stride,
 				source_size,
-				input_per_filter_size,
 				source_pos,
 				[&](const felt2::Vec3i & pos) { input_pos_list.push_back(pos); });
 
-			THEN("position is as expected")
+			THEN("source point maps to a single input grid point at the maximum of the input grid")
 			{
 				CAPTURE(input_pos_list);
 				CHECK(std::ranges::equal(input_pos_list, PosArray{felt2::Vec3i{5, 3, 3}}));
@@ -876,15 +907,13 @@ SCENARIO("Applying filter to ConvGrid")
 			using PosArray = std::vector<felt2::Vec3i>;
 			PosArray input_pos_list;
 			source_pos_to_input_pos(
-				input_size,
 				filter_size,
 				filter_stride,
 				source_size,
-				input_per_filter_size,
 				source_pos,
 				[&](const felt2::Vec3i & pos) { input_pos_list.push_back(pos); });
 
-			THEN("position is as expected")
+			THEN("source point maps to 2 separate filter inputs")
 			{
 				CHECK(input_pos_list == PosArray{felt2::Vec3i{1, 1, 1}, felt2::Vec3i{2, 1, 1}});
 			}
@@ -898,11 +927,9 @@ SCENARIO("Applying filter to ConvGrid")
 			PosArray filter_pos_list;
 			PosArray global_pos_list;
 			source_pos_to_input_pos(
-				input_size,
 				filter_size,
 				filter_stride,
 				source_size,
-				input_per_filter_size,
 				source_pos,
 				[&](const felt2::Vec3i & filter_pos, const felt2::Vec3i & global_pos)
 				{
@@ -910,7 +937,7 @@ SCENARIO("Applying filter to ConvGrid")
 					global_pos_list.push_back(global_pos);
 				});
 
-			THEN("position is as expected")
+			THEN("source point maps to a single position in a filter input")
 			{
 				CAPTURE(filter_pos_list);
 				CAPTURE(global_pos_list);
@@ -919,6 +946,11 @@ SCENARIO("Applying filter to ConvGrid")
 			}
 		}
 	}
+}
+
+
+SCENARIO("Applying filter to ConvGrid")
+{
 
 	GIVEN("a simple monochrome image file loaded with 1 pixel of zero padding")
 	{
@@ -1016,11 +1048,9 @@ SCENARIO("Applying filter to ConvGrid")
 									image_grid_device->get(input_pos_idx);
 
 								source_pos_to_input_pos(
-									input_size,
 									filter_size,
 									filter_stride,
 									image_grid_device->size(),
-									input_per_filter_size,
 									source_pos,
 									[&](felt2::Vec3i const & filter_pos,
 										felt2::Vec3i const & global_pos)
