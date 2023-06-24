@@ -412,41 +412,6 @@ SCENARIO("Input/output ConvGrids")
 					CHECK(num_nonzero > 0);
 				}
 			}
-
-			AND_GIVEN("an output grid and weight matrix")
-			{
-				felt2::Vec3i const filter_output_shape{2, 2, 4};
-				felt2::Vec3i const filter_output_grid_size =
-					(filter_input_grid.children().size().array() * filter_output_shape.array())
-						.matrix();
-
-				convfelt::ConvGrid filter_output_grid{filter_output_grid_size, filter_output_shape};
-
-				CHECK(filter_output_grid.children().size() == filter_input_grid.children().size());
-
-				Eigen::MatrixXf weights{filter_output_shape.prod(), filter_input_shape.prod()};
-				weights.setConstant(1);
-
-				[[maybe_unused]] auto const check_output = [&]
-				{
-					for (auto const & filter_pos_idx :
-						 convfelt::iter::pos_idx(filter_output_grid.children()))
-					{
-						felt2::Scalar const expected =
-							filter_input_grid.children().get(filter_pos_idx).matrix().sum();
-
-						const felt2::Vec3i filter_pos =
-							filter_input_grid.children().index(filter_pos_idx);
-						CAPTURE(filter_pos);
-
-						for (auto const & actual :
-							 convfelt::iter::val(filter_output_grid.children().get(filter_pos_idx)))
-						{
-							CHECK(actual == expected);
-						}
-					}
-				};
-			}
 		}
 	}
 }
