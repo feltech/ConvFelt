@@ -179,16 +179,16 @@ SCENARIO("Using OpenImageIO with cppcoro and loading into Felt grid")
  * Assuming we wish to construct a grid storing all filter inputs side-by-side, given a source image
  * size calculate how many distinct regions will need to be stacked side-by-side.
  *
- * @param source_size Size of source image.
  * @param filter_size Size of filter to walk across source image.
  * @param filter_stride Size of each step as the filter walks across the source image.
+ * @param source_size Size of source image.
  * @return Number of regions (along each dimension) stamped out by the filter after it has walked
  * the source image.
  */
 felt2::Vec3i input_per_filter_size_from_source_and_filter_size(
-	felt2::Vec3i const & source_size,
 	felt2::Vec3i const & filter_size,
-	felt2::Vec3i const & filter_stride)
+	felt2::Vec3i const & filter_stride,
+	felt2::Vec3i const & source_size)
 {
 	felt2::Vec3i input_per_filter_size = felt2::Vec3i::Ones();
 	auto const source_window = source_size.head<2>();
@@ -203,18 +203,18 @@ felt2::Vec3i input_per_filter_size_from_source_and_filter_size(
  * Assuming we wish to construct a grid storing all filter inputs side-by-side, given a source image
  * size calculate how large the grid of filter inputs must be.
  *
- * @param source_size Size of source image.
  * @param filter_size Size of filter to walk across source image.
  * @param filter_stride Size of each step as the filter walks across the source image.
+ * @param source_size Size of source image.
  * @return Required size to store all filter inputs side-by-side.
  */
 felt2::Vec3i input_size_from_source_and_filter_size(
-	felt2::Vec3i const & source_size,
 	felt2::Vec3i const & filter_size,
-	felt2::Vec3i const & filter_stride)
+	felt2::Vec3i const & filter_stride,
+	felt2::Vec3i const & source_size)
 {
 	felt2::Vec3i const input_per_filter_size =
-		input_per_filter_size_from_source_and_filter_size(source_size, filter_size, filter_stride);
+		input_per_filter_size_from_source_and_filter_size(filter_size, filter_stride, source_size);
 
 	return (input_per_filter_size.array() * filter_size.array()).matrix();
 }
@@ -353,7 +353,7 @@ SCENARIO("Input/output ConvGrids")
 			{
 				felt2::Vec3i const filter_input_shape{4, 4, 3};
 				felt2::Vec3i const input_size = input_size_from_source_and_filter_size(
-					image_grid.size(), filter_input_shape, filter_stride);
+					filter_input_shape, filter_stride, image_grid.size());
 
 				return FilterGrid{input_size, filter_input_shape};
 			}();
@@ -562,7 +562,7 @@ SCENARIO("Transforming source image points to filter input grid points and vice 
 		WHEN("number of required filter stamps is calculated")
 		{
 			felt2::Vec3i const size = input_per_filter_size_from_source_and_filter_size(
-				source_size, filter_size, filter_stride);
+				filter_size, filter_stride, source_size);
 
 			THEN("only one stamp is required")
 			{
@@ -572,7 +572,7 @@ SCENARIO("Transforming source image points to filter input grid points and vice 
 		WHEN("input grid size is calculated")
 		{
 			felt2::Vec3i const input_size =
-				input_size_from_source_and_filter_size(source_size, filter_size, filter_stride);
+				input_size_from_source_and_filter_size(filter_size, filter_stride, source_size);
 
 			THEN("input size is same as source size")
 			{
@@ -591,7 +591,7 @@ SCENARIO("Transforming source image points to filter input grid points and vice 
 		WHEN("number of required filter stamps is calculated")
 		{
 			felt2::Vec3i const size = input_per_filter_size_from_source_and_filter_size(
-				source_size, filter_size, filter_stride);
+				filter_size, filter_stride, source_size);
 
 			THEN("only one stamp is required")
 			{
@@ -601,7 +601,7 @@ SCENARIO("Transforming source image points to filter input grid points and vice 
 		WHEN("input grid size is calculated")
 		{
 			felt2::Vec3i const input_size =
-				input_size_from_source_and_filter_size(source_size, filter_size, filter_stride);
+				input_size_from_source_and_filter_size(filter_size, filter_stride, source_size);
 
 			THEN("input size is same as source size")
 			{
@@ -620,7 +620,7 @@ SCENARIO("Transforming source image points to filter input grid points and vice 
 		WHEN("number of required filters is calculated")
 		{
 			felt2::Vec3i const size = input_per_filter_size_from_source_and_filter_size(
-				source_size, filter_size, filter_stride);
+				filter_size, filter_stride, source_size);
 
 			THEN("only one stamp is required")
 			{
@@ -630,7 +630,7 @@ SCENARIO("Transforming source image points to filter input grid points and vice 
 		WHEN("input grid size is calculated")
 		{
 			felt2::Vec3i const input_size =
-				input_size_from_source_and_filter_size(source_size, filter_size, filter_stride);
+				input_size_from_source_and_filter_size(filter_size, filter_stride, source_size);
 
 			THEN("input size is same as source size")
 			{
@@ -649,7 +649,7 @@ SCENARIO("Transforming source image points to filter input grid points and vice 
 		WHEN("number of required filter stamps is calculated")
 		{
 			felt2::Vec3i const size = input_per_filter_size_from_source_and_filter_size(
-				source_size, filter_size, filter_stride);
+				filter_size, filter_stride, source_size);
 
 			THEN("3 stamps in each direction is required")
 			{
@@ -659,7 +659,7 @@ SCENARIO("Transforming source image points to filter input grid points and vice 
 		WHEN("input grid size is calculated")
 		{
 			felt2::Vec3i const input_size =
-				input_size_from_source_and_filter_size(source_size, filter_size, filter_stride);
+				input_size_from_source_and_filter_size(filter_size, filter_stride, source_size);
 
 			THEN("input grid size is same as source size")
 			{
@@ -679,7 +679,7 @@ SCENARIO("Transforming source image points to filter input grid points and vice 
 		WHEN("number of required filter stamps is calculated")
 		{
 			felt2::Vec3i const size = input_per_filter_size_from_source_and_filter_size(
-				source_size, filter_size, filter_stride);
+				filter_size, filter_stride, source_size);
 
 			THEN("2 stamps in each direction is required")
 			{
@@ -689,7 +689,7 @@ SCENARIO("Transforming source image points to filter input grid points and vice 
 		WHEN("input grid size is calculated")
 		{
 			felt2::Vec3i const input_size =
-				input_size_from_source_and_filter_size(source_size, filter_size, filter_stride);
+				input_size_from_source_and_filter_size(filter_size, filter_stride, source_size);
 
 			THEN("input grid size is same as source size")
 			{
@@ -708,7 +708,7 @@ SCENARIO("Transforming source image points to filter input grid points and vice 
 		WHEN("number of required filter stamps is calculated")
 		{
 			felt2::Vec3i const size = input_per_filter_size_from_source_and_filter_size(
-				source_size, filter_size, filter_stride);
+				filter_size, filter_stride, source_size);
 
 			THEN("3 horizontal and 2 vertical stamps are required")
 			{
@@ -718,7 +718,7 @@ SCENARIO("Transforming source image points to filter input grid points and vice 
 		WHEN("input grid size is calculated")
 		{
 			felt2::Vec3i const input_size =
-				input_size_from_source_and_filter_size(source_size, filter_size, filter_stride);
+				input_size_from_source_and_filter_size(filter_size, filter_stride, source_size);
 
 			THEN("input grid size is larger than source to accommodate overlapping filter stamps")
 			{
@@ -737,7 +737,7 @@ SCENARIO("Transforming source image points to filter input grid points and vice 
 		WHEN("number of required filter stamps is calculated")
 		{
 			felt2::Vec3i const size = input_per_filter_size_from_source_and_filter_size(
-				source_size, filter_size, filter_stride);
+				filter_size, filter_stride, source_size);
 
 			THEN("only one stamp is required")
 			{
@@ -747,7 +747,7 @@ SCENARIO("Transforming source image points to filter input grid points and vice 
 		WHEN("input grid size is calculated")
 		{
 			felt2::Vec3i const input_size =
-				input_size_from_source_and_filter_size(source_size, filter_size, filter_stride);
+				input_size_from_source_and_filter_size(filter_size, filter_stride, source_size);
 
 			THEN("input grid size is same as source size")
 			{
@@ -766,7 +766,7 @@ SCENARIO("Transforming source image points to filter input grid points and vice 
 		WHEN("number of required filter stamps is calculated")
 		{
 			felt2::Vec3i const size = input_per_filter_size_from_source_and_filter_size(
-				source_size, filter_size, filter_stride);
+				filter_size, filter_stride, source_size);
 
 			THEN("output size is calculated correctly")
 			{
@@ -776,7 +776,7 @@ SCENARIO("Transforming source image points to filter input grid points and vice 
 		WHEN("input grid size is calculated")
 		{
 			felt2::Vec3i const input_size =
-				input_size_from_source_and_filter_size(source_size, filter_size, filter_stride);
+				input_size_from_source_and_filter_size(filter_size, filter_stride, source_size);
 
 			THEN("input grid size is too small due to stride step going out of bounds")
 			{
@@ -794,7 +794,7 @@ SCENARIO("Transforming source image points to filter input grid points and vice 
 		felt2::Vec3i const source_size{4, 4, 4};
 
 		felt2::Vec3i const input_size =
-			input_size_from_source_and_filter_size(source_size, filter_size, filter_stride);
+			input_size_from_source_and_filter_size(filter_size, filter_stride, source_size);
 
 		CHECK(input_size == felt2::Vec3i{6, 4, 4});
 
@@ -941,7 +941,7 @@ SCENARIO("Applying filter to ConvGrid")
 			felt2::Vec3i const filter_size{4, 4, 3};
 
 			felt2::Vec3i const input_size = input_size_from_source_and_filter_size(
-				image_grid.size(), filter_size, filter_stride);
+				filter_size, filter_stride, image_grid.size());
 
 			auto filter_input_grid = convfelt::make_unique_sycl<FilterGrid>(
 				dev, ctx, input_size, filter_size.head<2>(), ctx, dev);
