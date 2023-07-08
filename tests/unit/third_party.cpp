@@ -1102,16 +1102,6 @@ SCENARIO("Applying filter to ConvGrid")
 						CHECK(expected_child.storage().size() == actual_child.storage().size());
 
 						CHECK(std::ranges::equal(expected_child.storage(), actual_child.storage()));
-						//						for (felt2::PosIdx leaf_pos_idx :
-						// convfelt::iter::pos_idx(actual_child))
-						//						{
-						//							felt2::Scalar const expected_value =
-						// expected_child.get(leaf_pos_idx); felt2::Scalar const actual_value =
-						// actual_child.get(leaf_pos_idx); INFO(actual_child.index(leaf_pos_idx));
-						// CHECK(expected_value
-						// ==
-						// actual_value);
-						//						}
 					}
 				}
 			}
@@ -1190,8 +1180,7 @@ SCENARIO("Applying filter to ConvGrid")
 								1,
 								sycl::access::mode::read_write,
 								sycl::access::target::local>
-								input_child_data(
-									sycl::range<1>(static_cast<size_t>(weights.cols())), cgh);
+								input_child_data{static_cast<std::size_t>(weights.cols()), cgh};
 
 							cgh.parallel_for<class grid_mult>(
 								work_range,
@@ -1220,11 +1209,11 @@ SCENARIO("Applying filter to ConvGrid")
 
 									ColVectorMap const input_vec{
 										input_child_data.get_pointer().get(),
-										Eigen::Index(input_child.storage().size()),
+										static_cast<Eigen::Index>(input_child.storage().size()),
 										1};
 									ColVectorMap output_vec{
 										output_child.storage().data(),
-										Eigen::Index(output_child.storage().size()),
+										static_cast<Eigen::Index>(output_child.storage().size()),
 										1};
 
 									auto const row_idx = static_cast<Eigen::Index>(local_id);
