@@ -633,12 +633,12 @@ struct DataArray
 
 	Array m_data{};
 
-	Array & storage()
+	[[nodiscard]] constexpr Array & storage() noexcept
 	{
 		return m_data;
 	}
 
-	Array const & storage() const
+	[[nodiscard]] constexpr Array const & storage() const noexcept
 	{
 		return m_data;
 	}
@@ -651,12 +651,12 @@ struct DataArraySpan
 
 	Array m_data{};
 
-	Array & storage()
+	constexpr Array & storage() noexcept
 	{
 		return m_data;
 	}
 
-	Array const & storage() const
+	constexpr Array const & storage() const noexcept
 	{
 		return m_data;
 	}
@@ -673,7 +673,7 @@ struct ChildrenSize
 	VecDi const m_child_size;
 	VecDi const m_child_offset{(m_size_impl.offset().array() / m_child_size.array()).matrix()};
 	VecDi const m_children_size{
-		[&]() noexcept
+		[&]() constexpr noexcept
 		{
 			VecDi children_size = (m_size_impl.size().array() / m_child_size.array()).matrix();
 			using Idx = typename VecDi::Index;
@@ -694,27 +694,27 @@ struct ChildrenSize
 	 *
 	 * @return size of child sub-grid.
 	 */
-	[[nodiscard]] const VecDi & child_size() const noexcept
+	[[nodiscard]] constexpr const VecDi & child_size() const noexcept
 	{
 		return m_child_size;
 	}
 
-	[[nodiscard]] const VecDi & child_offset() const noexcept
+	[[nodiscard]] constexpr const VecDi & child_offset() const noexcept
 	{
 		return m_child_offset;
 	}
 
-	[[nodiscard]] const VecDi & children_size() const noexcept
+	[[nodiscard]] constexpr const VecDi & children_size() const noexcept
 	{
 		return m_children_size;
 	}
 
-	[[nodiscard]] PosIdx num_children() const noexcept
+	[[nodiscard]] constexpr PosIdx num_children() const noexcept
 	{
 		return m_num_children;
 	}
 
-	[[nodiscard]] PosIdx num_elems_per_child() const noexcept
+	[[nodiscard]] constexpr PosIdx num_elems_per_child() const noexcept
 	{
 		return m_num_elems_per_child;
 	}
@@ -724,7 +724,7 @@ struct ChildrenSize
 	 * @param pos_leaf_ leaf grid node position vector.
 	 * @return position index of spatial partition in which leaf position lies.
 	 */
-	[[nodiscard]] PosIdx pos_idx_child(const VecDi & pos_leaf_) const noexcept
+	[[nodiscard]] constexpr PosIdx pos_idx_child(const VecDi & pos_leaf_) const noexcept
 	{
 		// Encode child position as an index.
 		return felt2::index(pos_child(pos_leaf_), m_size_impl.size(), m_size_impl.offset());
@@ -736,7 +736,7 @@ struct ChildrenSize
 	 * @param pos_leaf_ leaf grid node position vector.
 	 * @return position vector of spatial partition in which leaf position lies.
 	 */
-	[[nodiscard]] VecDi pos_child(const VecDi & pos_leaf_) const noexcept
+	[[nodiscard]] constexpr VecDi pos_child(const VecDi & pos_leaf_) const noexcept
 	{
 		// Position of leaf, without offset.
 		auto pos_leaf_offset = pos_leaf_ - m_size_impl.offset();
@@ -749,7 +749,7 @@ struct ChildrenSize
 	}
 
 	template <IsGridOfSpanGrids Children>
-	Children make_children_span(
+	[[nodiscard]] constexpr Children make_children_span(
 		HasResizeableStorage auto & storage_impl, auto &&... children_args) const
 	{
 		storage_impl.storage().resize(m_num_elems_per_child * m_num_children);
