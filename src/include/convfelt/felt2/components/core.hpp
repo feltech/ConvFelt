@@ -721,9 +721,13 @@ struct ChildrenSize
 		[&]() noexcept
 		{
 			VecDi children_size = (m_size_impl.size().array() / m_child_size.array()).matrix();
+			using Idx = typename VecDi::Index;
 
-			if ((children_size.array() * m_child_size.array()).matrix() != m_size_impl.size())
-				children_size += VecDi::Constant(1);
+			// Ensure total size is covered with partitions in the case that total size doesn't
+			// divide exactly.
+			for (Idx dim = 0; dim < static_cast<Idx>(k_dims); ++dim)
+				if (children_size(dim) * m_child_size(dim) != m_size_impl.size()(dim))
+					children_size(dim) += 1;
 
 			return children_size;
 		}()};
