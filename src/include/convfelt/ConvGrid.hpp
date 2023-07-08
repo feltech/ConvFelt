@@ -410,6 +410,7 @@ public:
 		is_device_shared,
 		felt2::components::USMDataArray<Traits>,
 		felt2::components::DataArray<Traits>>;
+	using BytesImpl = felt2::components::StorageBytes<StorageImpl>;
 	using AssertBoundsImpl =
 		felt2::components::AssertBounds<Traits, StreamImpl, SizeImpl, StorageImpl>;
 	using MatrixImpl = felt2::components::EigenColMajor2DMap<Traits, StorageImpl, ChildrenSizeImpl>;
@@ -419,6 +420,7 @@ private:
 	SizeImpl const m_size_impl;
 	ChildrenSizeImpl const m_children_size_impl;
 	StreamImpl m_stream_impl{};
+	BytesImpl m_bytes_impl{m_storage_impl};
 	AssertBoundsImpl const m_assert_bounds_impl{m_stream_impl, m_size_impl, m_storage_impl};
 	MatrixImpl m_matrix_impl{m_storage_impl, m_children_size_impl};
 
@@ -480,6 +482,14 @@ public:
 	decltype(auto) storage(auto &&... args) const noexcept
 	{
 		return m_storage_impl.storage(std::forward<decltype(args)>(args)...);
+	}
+	decltype(auto) bytes(auto &&... args) noexcept
+	{
+		return m_bytes_impl.bytes(std::forward<decltype(args)>(args)...);
+	}
+	decltype(auto) bytes(auto &&... args) const noexcept
+	{
+		return m_bytes_impl.bytes(std::forward<decltype(args)>(args)...);
 	}
 	decltype(auto) offset(auto &&... args) const noexcept
 	{

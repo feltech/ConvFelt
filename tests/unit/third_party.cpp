@@ -1159,11 +1159,33 @@ SCENARIO("Applying filter to ConvGrid")
 
 				WHEN("filter is applied to grid using Eigen in a hand-rolled kernel")
 				{
+					sycl::queue q{ctx, dev};
+
+					q.submit(
+						[pgrid = filter_input_grid.get()](sycl::handler & cgh)
+						{
+							cgh.prefetch(
+								pgrid->bytes().data(), pgrid->bytes().size());
+						});
+					q.submit(
+						[pgrid = filter_output_grid.get()](sycl::handler & cgh)
+						{
+							cgh.prefetch(
+								pgrid->bytes().data(), pgrid->bytes().size());
+						});
+					q.submit(
+						[weights](sycl::handler & cgh)
+						{
+							using ValType = std::remove_pointer_t<decltype(weights.data())>;
+							cgh.prefetch(
+								weights.data(),
+								static_cast<std::size_t>(weights.size()) * sizeof(ValType));
+						});
+
 					sycl::range<1> work_items{filter_input_grid->children().storage().size()};
 					sycl::nd_range<1> work_range{
 						filter_output_grid->storage().size(),
 						static_cast<size_t>(filter_output_grid->child_size().prod())};
-					sycl::queue q{ctx, dev};
 
 					q.submit(
 						[&](sycl::handler & cgh)

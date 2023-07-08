@@ -95,6 +95,13 @@ concept HasResizeableStorage = requires(T obj) {
 };
 
 template <class T>
+concept HasBytes = requires(T obj) {
+	{
+		obj.bytes()
+	} -> std::same_as<std::span<std::byte>>;
+};
+
+template <class T>
 concept HasStream = requires(T t) {
 	{
 		t.has_stream()
@@ -623,6 +630,28 @@ struct AccessByValue
 		m_assert_impl.assert_pos_bounds(pos_idx_, "set: ");
 #endif
 		m_storage_impl.storage()[pos_idx_] = val_;
+	}
+};
+
+template <HasStorage Storage>
+struct StorageBytes
+{
+	Storage & m_storage_impl;
+
+	using Leaf = std::remove_pointer_t<std::decay_t<decltype(m_storage_impl.storage().data())>>;
+
+	[[nodiscard]] constexpr std::span<std::byte const> bytes() const noexcept
+	{
+		return {
+			reinterpret_cast<std::byte const *>(m_storage_impl.storage().data()),
+			m_storage_impl.storage().size() * sizeof(Leaf)};
+	}
+
+	[[nodiscard]] constexpr std::span<std::byte> bytes() noexcept
+	{
+		return {
+			reinterpret_cast<std::byte *>(m_storage_impl.storage().data()),
+			m_storage_impl.storage().size() * sizeof(Leaf)};
 	}
 };
 
