@@ -764,24 +764,26 @@ struct ChildrenSize
 		for (PosIdx pos_child_idx = 0; pos_child_idx < children.storage().size(); pos_child_idx++)
 		{
 			// Position of child in children grid.
-			VecDi const pos_child = children.index(pos_child_idx);
+			VecDi const pos_child_in_parent_with_offset = children.index(pos_child_idx);
 			// Position of child in children grid, without offset.
-			auto const pos_child_offset = pos_child - children.offset();
+			auto const pos_child_in_parent = pos_child_in_parent_with_offset - children.offset();
 			// Scaled position of child == position in world space, without offset.
-			auto const offset_child_offset =
-				(pos_child_offset.array() * m_child_size.array()).matrix();
+			auto const pos_child_in_world_without_parent_offset =
+				(pos_child_in_parent.array() * m_child_size.array()).matrix();
 			// Position of child in world space, including offset.
-			auto offset_child = offset_child_offset + m_size_impl.offset();
+			auto const pos_child_in_world =
+				pos_child_in_world_without_parent_offset + m_size_impl.offset();
 
 			// Calculate overflow at edge of grid.
-			auto pos_lower = (pos_child.array() * m_child_size.array()).matrix();
-			auto pos_upper = (pos_lower.array() + m_child_size.array()).matrix();
-			auto signed_overflow = pos_upper - m_size_impl.size();
-			auto overflow = signed_overflow.cwiseMax(0);
+			auto const pos_lower =
+				(pos_child_in_parent_with_offset.array() * m_child_size.array()).matrix();
+			auto const pos_upper = (pos_lower.array() + m_child_size.array()).matrix();
+			auto const signed_overflow = pos_upper - m_size_impl.size();
+			auto const overflow = signed_overflow.cwiseMax(0);
 
 			auto & child = children.get(pos_child_idx);
 
-			child.resize(m_child_size - overflow, offset_child);
+			child.resize(m_child_size - overflow, pos_child_in_world);
 
 			auto const num_used_child_idxs = static_cast<felt2::PosIdx>(child.size().prod());
 			child.storage() =
