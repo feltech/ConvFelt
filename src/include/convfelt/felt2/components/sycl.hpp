@@ -30,17 +30,6 @@ struct USMDataArray
 	{
 		return m_data;
 	}
-
-	/**
-	 * Serialisation hook for cereal library.
-	 *
-	 * @param ar
-	 */
-	template <class Archive>
-	void serialize(Archive & ar)
-	{
-		ar(m_data);
-	}
 };
 
 struct Stream

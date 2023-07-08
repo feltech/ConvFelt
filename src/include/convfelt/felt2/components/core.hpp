@@ -212,12 +212,6 @@ struct Size
 	/// Cache for use in `inside`.
 	VecDi const m_offset_plus_size{m_offset + m_size};
 
-	template <class Archive>
-	void serialize(Archive & ar)
-	{
-		ar(m_size, m_offset, m_offset_plus_size);
-	}
-
 	const VecDi & size() const noexcept
 	{
 		return m_size;
@@ -283,12 +277,6 @@ struct ResizableSize
 	VecDi m_offset;
 	/// Cache for use in `inside`.
 	VecDi m_offset_plus_size{m_offset + m_size};
-
-	template <class Archive>
-	void serialize(Archive & ar)
-	{
-		ar(m_size, m_offset, m_offset_plus_size);
-	}
 
 	const VecDi & size() const noexcept
 	{
@@ -433,17 +421,6 @@ struct Activate
 	Storage & m_storage_impl;
 	Stream & m_stream_impl;
 	Leaf const m_background;
-
-	/**
-	 * Serialisation hook for cereal library.
-	 *
-	 * @param ar
-	 */
-	template <class Archive>
-	void serialize(Archive & ar)
-	{
-		ar(m_background);
-	}
 
 	/**
 	 * Get whether this grid has been activated (data allocated) or not.
@@ -665,17 +642,6 @@ struct DataArray
 	{
 		return m_data;
 	}
-
-	/**
-	 * Serialisation hook for cereal library.
-	 *
-	 * @param ar
-	 */
-	template <class Archive>
-	void serialize(Archive & ar)
-	{
-		ar(m_data);
-	}
 };
 
 template <HasLeafType Traits>
@@ -693,17 +659,6 @@ struct DataArraySpan
 	Array const & storage() const
 	{
 		return m_data;
-	}
-
-	/**
-	 * Serialisation hook for cereal library.
-	 *
-	 * @param ar
-	 */
-	template <class Archive>
-	void serialize(Archive & ar)
-	{
-		ar(m_data);
 	}
 };
 
