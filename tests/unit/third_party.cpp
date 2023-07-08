@@ -192,24 +192,56 @@ concept IsCallableWithFilterPos = requires(T t) {
 template <typename T>
 concept IsCallableWithPos = IsCallableWithGlobalPos<T> || IsCallableWithFilterPos<T>;
 
+template <felt2::Dim D = 3>
 struct FilterSizeHelper
 {
-	felt2::Vec3i const filter_size;
-	felt2::Vec3i const filter_stride;
+	using VecDi = felt2::VecDi<D>;
 
-	felt2::Vec3i input_size_from_source_size(felt2::Vec3i const & source_size)
+	VecDi const filter_size;
+	VecDi const filter_stride{[]() constexpr
+							  {
+								  VecDi default_stride;
+								  default_stride.template head<D - 1>().setConstant(1);
+								  default_stride.template tail<1>().setConstant(0);
+								  return default_stride;
+							  }()};
+
+	[[nodiscard]] felt2::VecDi<D - 1> filter_window() const
+	{
+		return filter_size.template head<D - 1>();
+	}
+
+	[[nodiscard]] VecDi input_size_from_source_size(VecDi const & source_size) const
 	{
 		return input_size_from_source_and_filter_size(filter_size, filter_stride, source_size);
 	}
 
-	felt2::Vec3i input_start_pos_from_filter_pos(felt2::Vec3i const & filter_pos)
+	[[nodiscard]] VecDi input_start_pos_from_filter_pos(VecDi const & filter_pos) const
 	{
 		return (filter_pos.array() * filter_stride.array()).matrix();
 	}
 
-	felt2::Vec3i source_pos_from_input_pos(felt2::Vec3i const & input_pos)
+	[[nodiscard]] VecDi source_pos_from_input_pos(VecDi const & input_pos) const
 	{
 		return source_pos_from_input_pos_and_filter_size(filter_size, filter_stride, input_pos);
+	}
+
+	[[nodiscard]] VecDi output_size_from_num_filter_regions(VecDi const & num_filter_regions) const
+	{
+		return (num_filter_regions.array() * filter_size.array()).matrix();
+	}
+
+	void input_pos_from_source_pos(
+		VecDi const & source_size,
+		VecDi const & source_pos,
+		IsCallableWithPos auto && callback) const
+	{
+		input_pos_from_source_pos_and_filter_size(
+			filter_size,
+			filter_stride,
+			source_size,
+			source_pos,
+			std::forward<decltype(callback)>(callback));
 	}
 
 	/**
@@ -222,18 +254,16 @@ struct FilterSizeHelper
 	 * @return Number of regions (along each dimension) stamped out by the filter after it has
 	 * walked the source image.
 	 */
-	static felt2::Vec3i input_per_filter_size_from_source_and_filter_size(
-		felt2::Vec3i const & filter_size,
-		felt2::Vec3i const & filter_stride,
-		felt2::Vec3i const & source_size)
+	static VecDi num_filter_regions_from_source_and_filter_size(
+		VecDi const & filter_size, VecDi const & filter_stride, VecDi const & source_size)
 	{
-		felt2::Vec3i input_per_filter_size = felt2::Vec3i::Ones();
-		auto const source_window = source_size.head<2>();
-		auto const filter_window = filter_size.head<2>();
-		auto const stride_window = filter_stride.head<2>();
-		auto output_window = input_per_filter_size.head<2>();
+		VecDi num_filter_regions = VecDi::Ones();
+		auto const source_window = source_size.template head<2>();
+		auto const filter_window = filter_size.template head<2>();
+		auto const stride_window = filter_stride.template head<2>();
+		auto output_window = num_filter_regions.template head<2>();
 		output_window += ((source_window - filter_window).array() / stride_window.array()).matrix();
-		return input_per_filter_size;
+		return num_filter_regions;
 	}
 
 	/**
@@ -245,14 +275,11 @@ struct FilterSizeHelper
 	 * @param source_size Size of source image.
 	 * @return Required size to store all filter inputs side-by-side.
 	 */
-	static felt2::Vec3i input_size_from_source_and_filter_size(
-		felt2::Vec3i const & filter_size,
-		felt2::Vec3i const & filter_stride,
-		felt2::Vec3i const & source_size)
+	static VecDi input_size_from_source_and_filter_size(
+		VecDi const & filter_size, VecDi const & filter_stride, VecDi const & source_size)
 	{
-		felt2::Vec3i const input_per_filter_size =
-			input_per_filter_size_from_source_and_filter_size(
-				filter_size, filter_stride, source_size);
+		VecDi const input_per_filter_size =
+			num_filter_regions_from_source_and_filter_size(filter_size, filter_stride, source_size);
 
 		return (input_per_filter_size.array() * filter_size.array()).matrix();
 	}
@@ -266,12 +293,10 @@ struct FilterSizeHelper
 	 * @param input_pos Position in grid of all filter inputs side-by-side.
 	 * @return
 	 */
-	static felt2::Vec3i source_pos_from_input_pos_and_filter_size(
-		felt2::Vec3i const & filter_size,
-		felt2::Vec3i const & filter_stride,
-		felt2::Vec3i const & input_pos)
+	static VecDi source_pos_from_input_pos_and_filter_size(
+		VecDi const & filter_size, VecDi const & filter_stride, VecDi const & input_pos)
 	{
-		felt2::Vec3i const filter_id = (input_pos.array() / filter_size.array()).matrix();
+		VecDi const filter_id = (input_pos.array() / filter_size.array()).matrix();
 		auto filter_input_start_pos = (filter_id.array() * filter_size.array()).matrix();
 		auto filter_source_start_pos = (filter_id.array() * filter_stride.array()).matrix();
 		auto input_filter_local_pos = input_pos - filter_input_start_pos;
@@ -284,6 +309,8 @@ struct FilterSizeHelper
 	 * Calculate the position(s) in a grid of all filter inputs side-by-side that correspond to a
 	 * given position in the source image.
 	 *
+	 * That is, map a source image pixel to the (multiple) filter input image pixel(s).
+	 *
 	 * @param filter_size Size of filter to walk across source image.
 	 * @param filter_stride Size of each step as the filter walks across the source image.
 	 * @param source_size Size of source image.
@@ -292,26 +319,26 @@ struct FilterSizeHelper
 	 * correspond to the @p source_pos position in the source image..
 	 */
 	static void input_pos_from_source_pos_and_filter_size(
-		felt2::Vec3i const & filter_size,
-		felt2::Vec3i const & filter_stride,
-		felt2::Vec3i const & source_size,
-		felt2::Vec3i const & source_pos,
+		VecDi const & filter_size,
+		VecDi const & filter_stride,
+		VecDi const & source_size,
+		VecDi const & source_pos,
 		IsCallableWithPos auto && callback)
 	{
-		auto one = felt2::Vec3i::Constant(1);
-		auto zero = felt2::Vec3i::Constant(0);
+		auto one = VecDi::Constant(1);
+		auto zero = VecDi::Constant(0);
 
-		felt2::Vec3i filter_pos_first = zero;
-		felt2::Vec3i filter_pos_last = zero;
+		VecDi filter_pos_first = zero;
+		VecDi filter_pos_last = zero;
 
-		[[maybe_unused]] auto const one_window = one.head<2>();
-		auto const zero_window = zero.head<2>();
-		auto const source_size_window = source_size.head<2>();
-		auto const source_pos_window = source_pos.head<2>();
-		auto const filter_size_window = filter_size.head<2>();
-		auto const filter_stride_window = filter_stride.head<2>();
-		auto filter_pos_first_window = filter_pos_first.head<2>();
-		auto filter_pos_last_window = filter_pos_last.head<2>();
+		[[maybe_unused]] auto const one_window = one.template head<2>();
+		auto const zero_window = zero.template head<2>();
+		auto const source_size_window = source_size.template head<2>();
+		auto const source_pos_window = source_pos.template head<2>();
+		auto const filter_size_window = filter_size.template head<2>();
+		auto const filter_stride_window = filter_stride.template head<2>();
+		auto filter_pos_first_window = filter_pos_first.template head<2>();
+		auto filter_pos_last_window = filter_pos_last.template head<2>();
 
 		filter_pos_last_window.array() =
 			source_pos_window.array().min(source_size_window.array() - filter_size_window.array()) /
@@ -327,7 +354,7 @@ struct FilterSizeHelper
 		for (felt2::Dim x = filter_pos_first(0); x <= filter_pos_last(0); ++x)
 			for (felt2::Dim y = filter_pos_first(1); y <= filter_pos_last(1); ++y)
 			{
-				felt2::Vec3i const filter_pos{x, y, 0};
+				VecDi const filter_pos{x, y, 0};
 				auto source_filter_start_pos =
 					(filter_pos.array() * filter_stride.array()).matrix();
 				auto filter_source_local_pos = source_pos - source_filter_start_pos;
@@ -346,6 +373,13 @@ struct FilterSizeHelper
 	}
 };
 
+template <felt2::Dim D, class... Others>
+FilterSizeHelper(felt2::VecDi<D>, Others...) -> FilterSizeHelper<D>;
+
+// template <class... Others>
+// FilterSizeHelper(std::initializer_list<felt2::PosIdx> size, Others...) ->
+// FilterSizeHelper<size.size()>;
+
 SCENARIO("Transforming source image points to filter input grid points and vice versa")
 {
 	GIVEN("stride size 3x3, filter size 3x3 and image size 3x3 with 4 channels")
@@ -358,7 +392,7 @@ SCENARIO("Transforming source image points to filter input grid points and vice 
 		WHEN("number of required filter stamps is calculated")
 		{
 			felt2::Vec3i const size =
-				FilterSizeHelper::input_per_filter_size_from_source_and_filter_size(
+				FilterSizeHelper<>::num_filter_regions_from_source_and_filter_size(
 					filter_size, filter_stride, source_size);
 
 			THEN("only one stamp is required")
@@ -369,7 +403,7 @@ SCENARIO("Transforming source image points to filter input grid points and vice 
 		WHEN("input grid size is calculated")
 		{
 			felt2::Vec3i const input_size =
-				FilterSizeHelper::input_size_from_source_and_filter_size(
+				FilterSizeHelper<>::input_size_from_source_and_filter_size(
 					filter_size, filter_stride, source_size);
 
 			THEN("input size is same as source size")
@@ -389,7 +423,7 @@ SCENARIO("Transforming source image points to filter input grid points and vice 
 		WHEN("number of required filter stamps is calculated")
 		{
 			felt2::Vec3i const size =
-				FilterSizeHelper::input_per_filter_size_from_source_and_filter_size(
+				FilterSizeHelper<>::num_filter_regions_from_source_and_filter_size(
 					filter_size, filter_stride, source_size);
 
 			THEN("only one stamp is required")
@@ -400,7 +434,7 @@ SCENARIO("Transforming source image points to filter input grid points and vice 
 		WHEN("input grid size is calculated")
 		{
 			felt2::Vec3i const input_size =
-				FilterSizeHelper::input_size_from_source_and_filter_size(
+				FilterSizeHelper<>::input_size_from_source_and_filter_size(
 					filter_size, filter_stride, source_size);
 
 			THEN("input size is same as source size")
@@ -420,7 +454,7 @@ SCENARIO("Transforming source image points to filter input grid points and vice 
 		WHEN("number of required filters is calculated")
 		{
 			felt2::Vec3i const size =
-				FilterSizeHelper::input_per_filter_size_from_source_and_filter_size(
+				FilterSizeHelper<>::num_filter_regions_from_source_and_filter_size(
 					filter_size, filter_stride, source_size);
 
 			THEN("only one stamp is required")
@@ -431,7 +465,7 @@ SCENARIO("Transforming source image points to filter input grid points and vice 
 		WHEN("input grid size is calculated")
 		{
 			felt2::Vec3i const input_size =
-				FilterSizeHelper::input_size_from_source_and_filter_size(
+				FilterSizeHelper<>::input_size_from_source_and_filter_size(
 					filter_size, filter_stride, source_size);
 
 			THEN("input size is same as source size")
@@ -451,7 +485,7 @@ SCENARIO("Transforming source image points to filter input grid points and vice 
 		WHEN("number of required filter stamps is calculated")
 		{
 			felt2::Vec3i const size =
-				FilterSizeHelper::input_per_filter_size_from_source_and_filter_size(
+				FilterSizeHelper<>::num_filter_regions_from_source_and_filter_size(
 					filter_size, filter_stride, source_size);
 
 			THEN("3 stamps in each direction is required")
@@ -462,7 +496,7 @@ SCENARIO("Transforming source image points to filter input grid points and vice 
 		WHEN("input grid size is calculated")
 		{
 			felt2::Vec3i const input_size =
-				FilterSizeHelper::input_size_from_source_and_filter_size(
+				FilterSizeHelper<>::input_size_from_source_and_filter_size(
 					filter_size, filter_stride, source_size);
 
 			THEN("input grid size is same as source size")
@@ -483,7 +517,7 @@ SCENARIO("Transforming source image points to filter input grid points and vice 
 		WHEN("number of required filter stamps is calculated")
 		{
 			felt2::Vec3i const size =
-				FilterSizeHelper::input_per_filter_size_from_source_and_filter_size(
+				FilterSizeHelper<>::num_filter_regions_from_source_and_filter_size(
 					filter_size, filter_stride, source_size);
 
 			THEN("2 stamps in each direction is required")
@@ -494,7 +528,7 @@ SCENARIO("Transforming source image points to filter input grid points and vice 
 		WHEN("input grid size is calculated")
 		{
 			felt2::Vec3i const input_size =
-				FilterSizeHelper::input_size_from_source_and_filter_size(
+				FilterSizeHelper<>::input_size_from_source_and_filter_size(
 					filter_size, filter_stride, source_size);
 
 			THEN("input grid size is same as source size")
@@ -514,7 +548,7 @@ SCENARIO("Transforming source image points to filter input grid points and vice 
 		WHEN("number of required filter stamps is calculated")
 		{
 			felt2::Vec3i const size =
-				FilterSizeHelper::input_per_filter_size_from_source_and_filter_size(
+				FilterSizeHelper<>::num_filter_regions_from_source_and_filter_size(
 					filter_size, filter_stride, source_size);
 
 			THEN("3 horizontal and 2 vertical stamps are required")
@@ -525,7 +559,7 @@ SCENARIO("Transforming source image points to filter input grid points and vice 
 		WHEN("input grid size is calculated")
 		{
 			felt2::Vec3i const input_size =
-				FilterSizeHelper::input_size_from_source_and_filter_size(
+				FilterSizeHelper<>::input_size_from_source_and_filter_size(
 					filter_size, filter_stride, source_size);
 
 			THEN("input grid size is larger than source to accommodate overlapping filter stamps")
@@ -545,7 +579,7 @@ SCENARIO("Transforming source image points to filter input grid points and vice 
 		WHEN("number of required filter stamps is calculated")
 		{
 			felt2::Vec3i const size =
-				FilterSizeHelper::input_per_filter_size_from_source_and_filter_size(
+				FilterSizeHelper<>::num_filter_regions_from_source_and_filter_size(
 					filter_size, filter_stride, source_size);
 
 			THEN("only one stamp is required")
@@ -556,7 +590,7 @@ SCENARIO("Transforming source image points to filter input grid points and vice 
 		WHEN("input grid size is calculated")
 		{
 			felt2::Vec3i const input_size =
-				FilterSizeHelper::input_size_from_source_and_filter_size(
+				FilterSizeHelper<>::input_size_from_source_and_filter_size(
 					filter_size, filter_stride, source_size);
 
 			THEN("input grid size is same as source size")
@@ -576,7 +610,7 @@ SCENARIO("Transforming source image points to filter input grid points and vice 
 		WHEN("number of required filter stamps is calculated")
 		{
 			felt2::Vec3i const size =
-				FilterSizeHelper::input_per_filter_size_from_source_and_filter_size(
+				FilterSizeHelper<>::num_filter_regions_from_source_and_filter_size(
 					filter_size, filter_stride, source_size);
 
 			THEN("only one stamp is required")
@@ -587,7 +621,7 @@ SCENARIO("Transforming source image points to filter input grid points and vice 
 		WHEN("input grid size is calculated")
 		{
 			felt2::Vec3i const input_size =
-				FilterSizeHelper::input_size_from_source_and_filter_size(
+				FilterSizeHelper<>::input_size_from_source_and_filter_size(
 					filter_size, filter_stride, source_size);
 
 			THEN("input grid size is too small due to stride step going out of bounds")
@@ -605,7 +639,7 @@ SCENARIO("Transforming source image points to filter input grid points and vice 
 
 		felt2::Vec3i const source_size{4, 4, 4};
 
-		felt2::Vec3i const input_size = FilterSizeHelper::input_size_from_source_and_filter_size(
+		felt2::Vec3i const input_size = FilterSizeHelper<>::input_size_from_source_and_filter_size(
 			filter_size, filter_stride, source_size);
 
 		CHECK(input_size == felt2::Vec3i{6, 4, 4});
@@ -614,7 +648,7 @@ SCENARIO("Transforming source image points to filter input grid points and vice 
 		{
 			felt2::Vec3i const input_pos{0, 0, 0};
 			felt2::Vec3i const source_pos =
-				FilterSizeHelper::source_pos_from_input_pos_and_filter_size(
+				FilterSizeHelper<>::source_pos_from_input_pos_and_filter_size(
 					filter_size, filter_stride, input_pos);
 
 			THEN("source pos is at minimum of source grid")
@@ -627,7 +661,7 @@ SCENARIO("Transforming source image points to filter input grid points and vice 
 		{
 			felt2::Vec3i const input_pos{5, 3, 3};
 			felt2::Vec3i const source_pos =
-				FilterSizeHelper::source_pos_from_input_pos_and_filter_size(
+				FilterSizeHelper<>::source_pos_from_input_pos_and_filter_size(
 					filter_size, filter_stride, input_pos);
 
 			THEN("source pos is at maximum of source grid")
@@ -642,7 +676,7 @@ SCENARIO("Transforming source image points to filter input grid points and vice 
 
 			using PosArray = std::vector<felt2::Vec3i>;
 			PosArray input_pos_list;
-			FilterSizeHelper::input_pos_from_source_pos_and_filter_size(
+			FilterSizeHelper<>::input_pos_from_source_pos_and_filter_size(
 				filter_size,
 				filter_stride,
 				source_size,
@@ -662,7 +696,7 @@ SCENARIO("Transforming source image points to filter input grid points and vice 
 
 			using PosArray = std::vector<felt2::Vec3i>;
 			PosArray input_pos_list;
-			FilterSizeHelper::input_pos_from_source_pos_and_filter_size(
+			FilterSizeHelper<>::input_pos_from_source_pos_and_filter_size(
 				filter_size,
 				filter_stride,
 				source_size,
@@ -682,7 +716,7 @@ SCENARIO("Transforming source image points to filter input grid points and vice 
 
 			using PosArray = std::vector<felt2::Vec3i>;
 			PosArray input_pos_list;
-			FilterSizeHelper::input_pos_from_source_pos_and_filter_size(
+			FilterSizeHelper<>::input_pos_from_source_pos_and_filter_size(
 				filter_size,
 				filter_stride,
 				source_size,
@@ -702,7 +736,7 @@ SCENARIO("Transforming source image points to filter input grid points and vice 
 			using PosArray = std::vector<felt2::Vec3i>;
 			PosArray filter_pos_list;
 			PosArray global_pos_list;
-			FilterSizeHelper::input_pos_from_source_pos_and_filter_size(
+			FilterSizeHelper<>::input_pos_from_source_pos_and_filter_size(
 				filter_size,
 				filter_stride,
 				source_size,
@@ -746,8 +780,7 @@ SCENARIO("Input/output ConvGrids")
 
 		WHEN("image is split into filter regions")
 		{
-			[[maybe_unused]] FilterSizeHelper filter_input_sizer{
-				.filter_size = {4, 4, 3}, .filter_stride = {2, 2, 0}};
+			FilterSizeHelper filter_input_sizer{felt2::Vec3i{4, 4, 3}, felt2::Vec3i{2, 2, 0}};
 
 			convfelt::ConvGrid filter_input_grid{
 				filter_input_sizer.input_size_from_source_size(image_grid.size()),
@@ -973,23 +1006,19 @@ SCENARIO("Applying filter to ConvGrid")
 			//			sycl::device dev{sycl::cpu_selector_v};
 			using FilterGrid = convfelt::ConvGridTD<felt2::Scalar, 3, true>;
 
-			const felt2::Vec3i filter_stride{2, 2, 0};
-			felt2::Vec3i const filter_size{4, 4, 3};
+			FilterSizeHelper const filter_input_sizer{felt2::Vec3i{4, 4, 3}, felt2::Vec3i{2, 2, 0}};
 
-			felt2::Vec3i const input_size =
-				FilterSizeHelper::input_size_from_source_and_filter_size(
-					filter_size, filter_stride, image_grid.size());
+			auto input_size = filter_input_sizer.input_size_from_source_size(image_grid.size());
 
 			auto filter_input_grid = convfelt::make_unique_sycl<FilterGrid>(
-				dev, ctx, input_size, filter_size.head<2>(), ctx, dev);
+				dev, ctx, input_size, filter_input_sizer.filter_window(), ctx, dev);
 
 			for (auto const & [filter_pos_idx, filter] :
 				 convfelt::iter::idx_and_val(filter_input_grid->children()))
 			{
 				const felt2::Vec3i input_pos_start =
-					(filter_input_grid->children().index(filter_pos_idx).array() *
-					 filter_stride.array())
-						.matrix();
+					filter_input_sizer.input_start_pos_from_filter_pos(
+						filter_input_grid->children().index(filter_pos_idx));
 
 				for (felt2::PosIdx local_pos_idx : convfelt::iter::pos_idx(filter))
 				{
@@ -1010,7 +1039,7 @@ SCENARIO("Applying filter to ConvGrid")
 					image_grid.storage().begin(), image_grid.storage().end());
 
 				auto filter_input_grid_device = convfelt::make_unique_sycl<FilterGrid>(
-					dev, ctx, input_size, filter_size.head<2>(), ctx, dev);
+					dev, ctx, input_size, filter_input_sizer.filter_window(), ctx, dev);
 				sycl::range<1> work_items{image_grid_device->storage().size()};
 				sycl::queue q{ctx, dev};
 
@@ -1023,8 +1052,7 @@ SCENARIO("Applying filter to ConvGrid")
 
 						cgh.parallel_for<class grid_copy>(
 							work_items,
-							[filter_stride,
-							 filter_size,
+							[filter_input_sizer,
 							 image_grid_device = image_grid_device.get(),
 							 filter_input_grid_device =
 								 filter_input_grid_device.get()](sycl::item<1> item)
@@ -1038,9 +1066,7 @@ SCENARIO("Applying filter to ConvGrid")
 								felt2::Scalar const source_value =
 									image_grid_device->get(input_pos_idx);
 
-								FilterSizeHelper::input_pos_from_source_pos_and_filter_size(
-									filter_size,
-									filter_stride,
+								filter_input_sizer.input_pos_from_source_pos(
 									image_grid_device->size(),
 									source_pos,
 									[&](felt2::Vec3i const & filter_pos,
@@ -1092,14 +1118,16 @@ SCENARIO("Applying filter to ConvGrid")
 
 			AND_GIVEN("an output grid and weight matrix")
 			{
-				felt2::Vec2i const filter_output_window{2, 2};
-				felt2::Vec3i const filter_output_shape{2, 2, 4};
-				felt2::Vec3i const filter_output_grid_size =
-					(filter_input_grid->children().size().array() * filter_output_shape.array())
-						.matrix();
+				FilterSizeHelper const filter_output_sizer{felt2::Vec3i{2, 2, 4}};
 
 				auto filter_output_grid = convfelt::make_unique_sycl<FilterGrid>(
-					dev, ctx, filter_output_grid_size, filter_output_window, ctx, dev);
+					dev,
+					ctx,
+					filter_output_sizer.output_size_from_num_filter_regions(
+						filter_input_grid->children().size()),
+					filter_output_sizer.filter_window(),
+					ctx,
+					dev);
 
 				REQUIRE(
 					filter_output_grid->children().size() == filter_input_grid->children().size());
@@ -1108,11 +1136,15 @@ SCENARIO("Applying filter to ConvGrid")
 					Eigen::Map<Eigen::Matrix<felt2::Scalar, Eigen::Dynamic, Eigen::Dynamic>, 0>;
 				using ColVectorMap = Eigen::Map<Eigen::Matrix<felt2::Scalar, Eigen::Dynamic, 1>, 0>;
 
-				std::size_t weights_size = static_cast<std::size_t>(filter_output_shape.prod()) *
-					static_cast<std::size_t>(filter_size.prod());
+				std::size_t weights_size =
+					static_cast<std::size_t>(filter_output_sizer.filter_size.prod()) *
+					static_cast<std::size_t>(filter_input_sizer.filter_size.prod());
 				auto weights_data = sycl::malloc_shared<felt2::Scalar>(weights_size, dev, ctx);
 
-				MatrixMap weights{weights_data, filter_output_shape.prod(), filter_size.prod()};
+				MatrixMap weights{
+					weights_data,
+					filter_output_sizer.filter_size.prod(),
+					filter_input_sizer.filter_size.prod()};
 				weights.setRandom();
 				//				Eigen::Matrix<felt2::Scalar, Eigen::Dynamic, 1> wrong{
 				//					filter_output_grid->child_size().prod(), 1};
