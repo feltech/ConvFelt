@@ -599,4 +599,110 @@ private:
 };
 
 using ConvGrid = ConvGridTD<felt2::Scalar, 3>;
+
+template <typename T, felt2::Dim D, bool is_device_shared = false>
+class TemplateParentGridTD
+{
+public:
+	using This = TemplateParentGridTD<T, D>;
+
+	struct Traits
+	{
+		using Leaf = T;
+		static constexpr felt2::Dim k_dims = D;
+	};
+
+	using VecDi = felt2::VecDi<Traits::k_dims>;
+	using Leaf = Traits::Leaf;
+	using Child = FilterTD<Leaf, Traits::k_dims>;
+	using ChildrenGrid = ByRef<Child, Traits::k_dims, is_device_shared>;
+
+	using SizeImpl = felt2::components::Size<Traits>;
+	using ChildrenSizeImpl = felt2::components::ChildrenSize<Traits, SizeImpl>;
+	using StreamImpl = felt2::components::Stream;
+
+private:
+	SizeImpl const m_size_impl;
+	ChildrenSizeImpl const m_children_size_impl;
+	StreamImpl m_stream_impl{};
+	ChildrenGrid m_children;
+
+public:
+	TemplateParentGridTD(const VecDi & size_, const felt2::VecDi<D - 1> & child_window_)
+		: TemplateParentGridTD{size_, window_to_size(child_window_, size_), {0, 0, 0}}
+	{
+	}
+
+	TemplateParentGridTD(const VecDi & size_, const VecDi & child_size_)
+		: TemplateParentGridTD{size_, child_size_, {0, 0, 0}}
+	{
+		assert(
+			size_(D - 1) == child_size_(D - 1) &&
+			"Channel dimension must be equal for both image and filters");
+	}
+
+	TemplateParentGridTD(
+		const VecDi & size_,
+		const felt2::VecDi<D - 1> & child_window_,
+		sycl::context const & context,
+		sycl::device const & device)
+		requires(is_device_shared)
+		: m_size_impl{size_, {0, 0, 0}},
+		  m_children_size_impl{m_size_impl, window_to_size(child_window_, m_size_impl.size())},
+		  m_children{m_children_size_impl.template make_empty_children<decltype(m_children)>(
+			  Child{{VecDi::Zero(), VecDi::Zero()}}, context, device)}
+	{
+		assert_child_size();
+	}
+
+	TemplateParentGridTD(const VecDi & size_, const VecDi & child_size_, const VecDi & offset_)
+		requires(!is_device_shared)
+		: m_size_impl{size_, offset_},
+		  m_children_size_impl{m_size_impl, child_size_},
+		  m_children{m_children_size_impl.template make_empty_children<decltype(m_children)>(
+			  Child{{VecDi::Zero(), VecDi::Zero()}})}
+	{
+		assert_child_size();
+	}
+	const ChildrenGrid & children() const noexcept
+	{
+		return m_children;
+	}
+
+	ChildrenGrid & children() noexcept
+	{
+		return m_children;
+	}
+
+	decltype(auto) get_stream(auto &&... args) const noexcept
+	{
+		return m_stream_impl.get_stream(std::forward<decltype(args)>(args)...);
+	}
+	decltype(auto) get_stream(auto &&... args) noexcept
+	{
+		return m_stream_impl.get_stream(std::forward<decltype(args)>(args)...);
+	}
+	decltype(auto) set_stream(sycl::stream * stream) noexcept
+	{
+		m_children.set_stream(stream);
+		for (auto & child : convfelt::iter::val(m_children)) child.set_stream(stream);
+		return m_stream_impl.set_stream(stream);
+	}
+
+private:
+	void assert_child_size()
+	{
+		assert(
+			m_children_size_impl.child_size()(m_children_size_impl.child_size().size() - 1) ==
+				m_size_impl.size()(m_size_impl.size().size() - 1) &&
+			"Depth of children must be same as depth of parent");
+	}
+
+	VecDi window_to_size(const felt2::VecDi<D - 1> & window_, const VecDi & size_)
+	{
+		VecDi child_size_;
+		child_size_ << window_, size_(size_.size() - 1);
+		return child_size_;
+	}
+};
 }  // namespace convfelt

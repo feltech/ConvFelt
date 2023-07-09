@@ -14,8 +14,8 @@ struct EigenMap
 	/// Type of data to store in grid nodes.
 	using Leaf = typename Traits::Leaf;
 	/// Map of of POD to Eigen::Array for manipulation using Eigen BLAS methods.
-	using ArrayColMap = Eigen::Map<Eigen::Array<Leaf, 1, Eigen::Dynamic>>;
-	using MatrixRowMap = Eigen::Map<Eigen::Matrix<Leaf, Eigen::Dynamic, 1>>;
+	using ColArrayMap = Eigen::Map<Eigen::Array<Leaf, 1, Eigen::Dynamic>, Eigen::ColMajor>;
+	using ColVectorMap = Eigen::Map<Eigen::Matrix<Leaf, Eigen::Dynamic, 1>, Eigen::ColMajor>;
 
 	Storage const & m_storage_impl;
 
@@ -24,9 +24,9 @@ struct EigenMap
 	 *
 	 * @return Eigen compatible vector of data array.
 	 */
-	ArrayColMap array() noexcept
+	constexpr ColArrayMap array() noexcept
 	{
-		return ArrayColMap(
+		return ColArrayMap(
 			m_storage_impl.storage().data(), Eigen::Index(m_storage_impl.storage().size()));
 	}
 	/**
@@ -34,15 +34,15 @@ struct EigenMap
 	 *
 	 * @return Eigen compatible vector of data array.
 	 */
-	MatrixRowMap matrix() noexcept
+	constexpr ColVectorMap matrix() noexcept
 	{
-		return MatrixRowMap(
+		return ColVectorMap(
 			m_storage_impl.storage().data(), Eigen::Index(m_storage_impl.storage().size()));
 	}
 
-	MatrixRowMap matrix() const noexcept
+	constexpr ColVectorMap matrix() const noexcept
 	{
-		return MatrixRowMap(
+		return ColVectorMap(
 			m_storage_impl.storage().data(), Eigen::Index(m_storage_impl.storage().size()));
 	}
 };

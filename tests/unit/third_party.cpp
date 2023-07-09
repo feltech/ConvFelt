@@ -1008,7 +1008,7 @@ SCENARIO("Applying filter to ConvGrid")
 		{
 			sycl::context ctx;
 			sycl::device dev{sycl::gpu_selector_v};
-			//			sycl::device dev{sycl::cpu_selector_v};
+			[[maybe_unused]] sycl::device cpu_dev{sycl::cpu_selector_v};
 			using FilterGrid = convfelt::ConvGridTD<felt2::Scalar, 3, true>;
 
 			FilterSizeHelper const filter_input_sizer{felt2::Vec3i{4, 4, 3}, felt2::Vec3i{2, 2, 0}};
@@ -1167,7 +1167,6 @@ SCENARIO("Applying filter to ConvGrid")
 						[&usm_weights](sycl::handler & cgh)
 						{ cgh.prefetch(usm_weights.bytes().data(), usm_weights.bytes().size()); });
 
-					sycl::range<1> work_items{filter_input_grid->children().storage().size()};
 					sycl::nd_range<1> work_range{
 						filter_output_grid->storage().size(),
 						static_cast<size_t>(filter_output_grid->child_size().prod())};
@@ -1212,6 +1211,10 @@ SCENARIO("Applying filter to ConvGrid")
 									assert(input_child.storage().size() == input_child_data.size());
 									assert(local_id < output_child.storage().size());
 
+									// TODO(DF): Do we need to construct filter input regions in
+									//  global memory only to copy out again into local memory? I.e.
+									//  will we need the input grid further down the line? Otherwise
+									//  could construct input region here.
 									item.async_work_group_copy(
 											input_child_data.get_pointer(),
 											sycl::global_ptr<felt2::Scalar>{
@@ -1224,14 +1227,133 @@ SCENARIO("Applying filter to ConvGrid")
 										Eigen::ColMajor>;
 
 									ColVectorMap const input_vec{
-										input_child_data.get_pointer().get(),
-										static_cast<Eigen::Index>(input_child.storage().size())};
+										input_child_data.get_pointer().get(), weights.cols()};
 									ColVectorMap output_vec{
-										output_child.storage().data(),
-										static_cast<Eigen::Index>(output_child.storage().size())};
+										output_child.storage().data(), weights.rows()};
 
 									auto const row_idx = static_cast<Eigen::Index>(local_id);
 									output_vec(row_idx) = weights.row(row_idx).dot(input_vec);
+								});
+						});
+					q.wait_and_throw();
+
+					THEN("values are as expected")
+					{
+						assert_expected_values();
+					}
+				}  // WHEN("filter is applied to grid using Eigen in a hand-rolled kernel")
+
+				WHEN("filter is applied in kernel that computes filter input on the fly")
+				{
+					sycl::queue q{ctx, dev};
+
+					auto filter_input_template = convfelt::make_unique_sycl<
+						convfelt::TemplateParentGridTD<felt2::Scalar, 3, true>>(
+						q.get_device(),
+						q.get_context(),
+						input_size,
+						filter_input_sizer.filter_window(),
+						q.get_context(),
+						q.get_device());
+
+					auto image_grid_device =
+						convfelt::make_unique_sycl<convfelt::ByValue<felt2::Scalar, 3, true>>(
+							q.get_device(),
+							q.get_context(),
+							image_grid.size(),
+							image_grid.offset(),
+							0.0f,
+							q.get_context(),
+							q.get_device());
+
+					image_grid_device->storage().assign(
+						image_grid.storage().begin(), image_grid.storage().end());
+
+					sycl::nd_range<1> work_range{
+						filter_output_grid->storage().size(),
+						static_cast<size_t>(filter_output_grid->child_size().prod())};
+
+					q.submit(
+						[&](sycl::handler & cgh)
+						{
+							sycl::stream os{2048, 256, cgh};
+							filter_input_grid->set_stream(&os);
+							filter_output_grid->set_stream(&os);
+							image_grid_device->set_stream(&os);
+
+							assert(
+								usm_weights.matrix().rows() ==
+								filter_output_grid->child_size().prod());
+							assert(
+								usm_weights.matrix().cols() ==
+								filter_input_grid->child_size().prod());
+
+							sycl::accessor<
+								felt2::Scalar,
+								1,
+								sycl::access::mode::read_write,
+								sycl::access::target::local>
+								input_child_data{
+									static_cast<std::size_t>(usm_weights.matrix().cols()), cgh};
+
+							cgh.parallel_for<class dynamic_input>(
+								work_range,
+								[image_grid = image_grid_device.get(),
+								 filter_input_template = filter_input_template.get(),
+								 filter_output_grid = filter_output_grid.get(),
+								 weights = usm_weights.matrix(),
+								 input_child_data,
+								 filter_input_sizer,
+								 input_size = filter_input_sizer.input_size_from_source_size(
+									 image_grid.size())](sycl::nd_item<1> item)
+								{
+									std::size_t const group_id = item.get_group_linear_id();
+									std::size_t const local_id = item.get_local_linear_id();
+
+									auto & input_child =
+										filter_input_template->children().get(group_id);
+									auto & output_child =
+										filter_output_grid->children().get(group_id);
+
+									auto const simd_width =
+										static_cast<felt2::PosIdx>(weights.rows());
+									auto const num_cols =
+										static_cast<felt2::PosIdx>(weights.cols());
+
+									input_child.storage() =
+										std::span(input_child_data.get_pointer().get(), num_cols);
+
+									assert(local_id < output_child.storage().size());
+									assert(item.get_local_range(0) == simd_width);
+									assert(
+										num_cols ==
+										static_cast<felt2::PosIdx>(input_child.size().prod()));
+									assert(
+										num_cols ==
+										static_cast<felt2::PosIdx>(
+											filter_input_sizer.num_filter_elems()));
+
+									for (felt2::PosIdx simd_col = 0; simd_col < num_cols;
+										 simd_col += simd_width)
+									{
+										felt2::PosIdx const col = simd_col + local_id;
+										if (col >= num_cols)
+											break;
+
+										felt2::Vec3i const pos_in_input_grid =
+											input_child.index(col);
+										felt2::Vec3i const pos_in_source_grid =
+											filter_input_sizer.source_pos_from_input_pos(
+												pos_in_input_grid);
+										input_child.set(col, image_grid->get(pos_in_source_grid));
+									}
+
+									item.barrier(sycl::access::fence_space::local_space);
+
+									auto const row_idx = static_cast<Eigen::Index>(local_id);
+
+									output_child.matrix()(row_idx) =
+										weights.row(row_idx).dot(input_child.matrix());
 								});
 						});
 					q.wait_and_throw();
