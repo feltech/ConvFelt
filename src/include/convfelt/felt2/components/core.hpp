@@ -87,6 +87,10 @@ concept HasStorage = requires(T obj) {
 	} -> IsStorage;
 };
 
+template <HasStorage Storage>
+using storage_leaf_t =
+	std::remove_pointer_t<std::decay_t<decltype(std::declval<Storage>().storage().data())>>;
+
 template <class T>
 concept HasResizeableStorage = requires(T obj) {
 	{
@@ -636,9 +640,9 @@ struct AccessByValue
 template <HasStorage Storage>
 struct StorageBytes
 {
-	Storage & m_storage_impl;
+	using Leaf = storage_leaf_t<Storage>;
 
-	using Leaf = std::remove_pointer_t<std::decay_t<decltype(m_storage_impl.storage().data())>>;
+	Storage & m_storage_impl;
 
 	[[nodiscard]] constexpr std::span<std::byte const> bytes() const noexcept
 	{

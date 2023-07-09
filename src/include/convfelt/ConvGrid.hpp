@@ -34,6 +34,53 @@
 
 namespace convfelt
 {
+class USMMatrix
+{
+public:
+	USMMatrix(
+		felt2::Dim const rows,
+		felt2::Dim const cols,
+		sycl::device const & dev,
+		sycl::context const & ctx)
+		: m_storage_impl{static_cast<std::size_t>(rows * cols), dev, ctx},
+		  m_bytes_impl{m_storage_impl},
+		  m_matrix_impl{rows, cols, m_storage_impl}
+	{
+	}
+
+	[[nodiscard]] decltype(auto) matrix(auto &&... args) noexcept
+	{
+		return m_matrix_impl.matrix(std::forward<decltype(args)>(args)...);
+	}
+
+	[[nodiscard]] decltype(auto) matrix(auto &&... args) const noexcept
+	{
+		return m_matrix_impl.matrix(std::forward<decltype(args)>(args)...);
+	}
+
+	[[nodiscard]] decltype(auto) bytes(auto &&... args) noexcept
+	{
+		return m_bytes_impl.bytes(std::forward<decltype(args)>(args)...);
+	}
+
+	[[nodiscard]] decltype(auto) bytes(auto &&... args) const noexcept
+	{
+		return m_bytes_impl.bytes(std::forward<decltype(args)>(args)...);
+	}
+
+private:
+	struct Traits
+	{
+		using Leaf = felt2::Scalar;
+	};
+	using StorageImpl = felt2::components::USMRawArray<Traits>;
+	using MatrixImpl = felt2::components::MatrixMap<StorageImpl>;
+	using BytesImpl = felt2::components::StorageBytes<StorageImpl>;
+
+	StorageImpl m_storage_impl;
+	BytesImpl m_bytes_impl;
+	MatrixImpl const m_matrix_impl;
+};
 
 template <typename T, felt2::Dim D, bool is_device_shared = false>
 class ByValue
@@ -54,7 +101,7 @@ public:
 	using StreamImpl = felt2::components::Stream;
 	using StorageImpl = std::conditional_t<
 		is_device_shared,
-		felt2::components::USMDataArray<Traits>,
+		felt2::components::USMResizeableArray<Traits>,
 		felt2::components::DataArray<Traits>>;
 	using AssertBoundsImpl =
 		felt2::components::AssertBounds<Traits, StreamImpl, SizeImpl, StorageImpl>;
@@ -177,7 +224,7 @@ public:
 	using StreamImpl = felt2::components::Stream;
 	using StorageImpl = std::conditional_t<
 		is_device_shared,
-		felt2::components::USMDataArray<Traits>,
+		felt2::components::USMResizeableArray<Traits>,
 		felt2::components::DataArray<Traits>>;
 	using AssertBoundsImpl =
 		felt2::components::AssertBounds<Traits, StreamImpl, SizeImpl, StorageImpl>;
@@ -408,12 +455,12 @@ public:
 	using StreamImpl = felt2::components::Stream;
 	using StorageImpl = std::conditional_t<
 		is_device_shared,
-		felt2::components::USMDataArray<Traits>,
+		felt2::components::USMResizeableArray<Traits>,
 		felt2::components::DataArray<Traits>>;
 	using BytesImpl = felt2::components::StorageBytes<StorageImpl>;
 	using AssertBoundsImpl =
 		felt2::components::AssertBounds<Traits, StreamImpl, SizeImpl, StorageImpl>;
-	using MatrixImpl = felt2::components::EigenColMajor2DMap<Traits, StorageImpl, ChildrenSizeImpl>;
+	using MatrixImpl = felt2::components::MatrixColPerChild<Traits, StorageImpl, ChildrenSizeImpl>;
 
 private:
 	StorageImpl m_storage_impl;

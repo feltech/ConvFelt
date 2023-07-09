@@ -8,9 +8,6 @@
 namespace convfelt
 {
 template <typename T>
-using UsmSharedAllocator = sycl::usm_allocator<T, sycl::usm::alloc::shared>;
-
-template <typename T>
 auto make_unique_sycl(sycl::device const & dev, sycl::context const & ctx, auto &&... args)
 {
 	auto * mem_region = sycl::malloc_shared<T>(1, dev, ctx);

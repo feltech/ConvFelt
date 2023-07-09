@@ -206,6 +206,11 @@ struct FilterSizeHelper
 								  return default_stride;
 							  }()};
 
+	[[nodiscard]] constexpr auto num_filter_elems() const noexcept
+	{
+		return filter_size.prod();
+	}
+
 	[[nodiscard]] felt2::VecDi<D - 1> filter_window() const
 	{
 		return filter_size.template head<D - 1>();
@@ -1122,20 +1127,13 @@ SCENARIO("Applying filter to ConvGrid")
 				REQUIRE(
 					filter_output_grid->children().size() == filter_input_grid->children().size());
 
-				using MatrixMap =
-					Eigen::Map<Eigen::Matrix<felt2::Scalar, Eigen::Dynamic, Eigen::Dynamic>, 0>;
-				using ColVectorMap = Eigen::Map<Eigen::Matrix<felt2::Scalar, Eigen::Dynamic, 1>, 0>;
+				convfelt::USMMatrix usm_weights{
+					filter_output_sizer.num_filter_elems(),
+					filter_input_sizer.num_filter_elems(),
+					dev,
+					ctx};
 
-				std::size_t weights_size =
-					static_cast<std::size_t>(filter_output_sizer.filter_size.prod()) *
-					static_cast<std::size_t>(filter_input_sizer.filter_size.prod());
-				auto weights_data = sycl::malloc_shared<felt2::Scalar>(weights_size, dev, ctx);
-
-				MatrixMap weights{
-					weights_data,
-					filter_output_sizer.filter_size.prod(),
-					filter_input_sizer.filter_size.prod()};
-				weights.setRandom();
+				usm_weights.matrix().setRandom();
 				//				Eigen::Matrix<felt2::Scalar, Eigen::Dynamic, 1> wrong{
 				//					filter_output_grid->child_size().prod(), 1};
 				//				wrong.setConstant(1);
@@ -1153,7 +1151,7 @@ SCENARIO("Applying filter to ConvGrid")
 							filter_input_grid->children().get(filter_pos_idx).matrix();
 						auto const output_matrix =
 							filter_output_grid->children().get(filter_pos_idx).matrix();
-						CHECK(weights * input_matrix == output_matrix);
+						CHECK(usm_weights.matrix() * input_matrix == output_matrix);
 					}
 				};
 
@@ -1161,26 +1159,13 @@ SCENARIO("Applying filter to ConvGrid")
 				{
 					sycl::queue q{ctx, dev};
 
+					q.submit([pgrid = filter_input_grid.get()](sycl::handler & cgh)
+							 { cgh.prefetch(pgrid->bytes().data(), pgrid->bytes().size()); });
+					q.submit([pgrid = filter_output_grid.get()](sycl::handler & cgh)
+							 { cgh.prefetch(pgrid->bytes().data(), pgrid->bytes().size()); });
 					q.submit(
-						[pgrid = filter_input_grid.get()](sycl::handler & cgh)
-						{
-							cgh.prefetch(
-								pgrid->bytes().data(), pgrid->bytes().size());
-						});
-					q.submit(
-						[pgrid = filter_output_grid.get()](sycl::handler & cgh)
-						{
-							cgh.prefetch(
-								pgrid->bytes().data(), pgrid->bytes().size());
-						});
-					q.submit(
-						[weights](sycl::handler & cgh)
-						{
-							using ValType = std::remove_pointer_t<decltype(weights.data())>;
-							cgh.prefetch(
-								weights.data(),
-								static_cast<std::size_t>(weights.size()) * sizeof(ValType));
-						});
+						[&usm_weights](sycl::handler & cgh)
+						{ cgh.prefetch(usm_weights.bytes().data(), usm_weights.bytes().size()); });
 
 					sycl::range<1> work_items{filter_input_grid->children().storage().size()};
 					sycl::nd_range<1> work_range{
@@ -1194,21 +1179,26 @@ SCENARIO("Applying filter to ConvGrid")
 							filter_input_grid->set_stream(&os);
 							filter_output_grid->set_stream(&os);
 
-							assert(weights.rows() == filter_output_grid->child_size().prod());
-							assert(weights.cols() == filter_input_grid->child_size().prod());
+							assert(
+								usm_weights.matrix().rows() ==
+								filter_output_grid->child_size().prod());
+							assert(
+								usm_weights.matrix().cols() ==
+								filter_input_grid->child_size().prod());
 
 							sycl::accessor<
 								felt2::Scalar,
 								1,
 								sycl::access::mode::read_write,
 								sycl::access::target::local>
-								input_child_data{static_cast<std::size_t>(weights.cols()), cgh};
+								input_child_data{
+									static_cast<std::size_t>(usm_weights.matrix().cols()), cgh};
 
 							cgh.parallel_for<class grid_mult>(
 								work_range,
 								[filter_input_grid = filter_input_grid.get(),
 								 filter_output_grid = filter_output_grid.get(),
-								 weights,
+								 weights = usm_weights.matrix(),
 								 input_child_data](sycl::nd_item<1> item)
 								{
 									std::size_t const group_id = item.get_group_linear_id();
@@ -1229,14 +1219,16 @@ SCENARIO("Applying filter to ConvGrid")
 											input_child.storage().size())
 										.wait();
 
+									using ColVectorMap = Eigen::Map<
+										Eigen::Matrix<felt2::Scalar, Eigen::Dynamic, 1>,
+										Eigen::ColMajor>;
+
 									ColVectorMap const input_vec{
 										input_child_data.get_pointer().get(),
-										static_cast<Eigen::Index>(input_child.storage().size()),
-										1};
+										static_cast<Eigen::Index>(input_child.storage().size())};
 									ColVectorMap output_vec{
 										output_child.storage().data(),
-										static_cast<Eigen::Index>(output_child.storage().size()),
-										1};
+										static_cast<Eigen::Index>(output_child.storage().size())};
 
 									auto const row_idx = static_cast<Eigen::Index>(local_id);
 									output_vec(row_idx) = weights.row(row_idx).dot(input_vec);
@@ -1248,9 +1240,7 @@ SCENARIO("Applying filter to ConvGrid")
 					{
 						assert_expected_values();
 					}
-
-					sycl::free(weights_data, ctx);
-				}
+				}  // WHEN("filter is applied to grid using Eigen in a hand-rolled kernel")
 
 				WHEN("filter is applied to grid using oneMKL")
 				{
@@ -1269,8 +1259,8 @@ SCENARIO("Applying filter to ConvGrid")
 						// alpha
 						1,
 						// a: weights
-						weights_data,
-						weights.rows(),
+						usm_weights.matrix().data(),
+						usm_weights.matrix().rows(),
 						// b: input
 						filter_input_grid->matrix().data(),
 						filter_input_grid->matrix().rows(),

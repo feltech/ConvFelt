@@ -48,7 +48,7 @@ struct EigenMap
 };
 
 template <HasLeafType Traits, HasStorage Data, HasChildrenSize ChildrenSize>
-struct EigenColMajor2DMap
+struct MatrixColPerChild
 {
 	/// Type of data to store in grid nodes.
 	using Leaf = typename Traits::Leaf;
@@ -79,4 +79,32 @@ struct EigenColMajor2DMap
 			Eigen::Index(m_children_size_impl.num_children())};
 	}
 };
+
+template <HasStorage Storage>
+struct MatrixMap
+{
+	/// Type of data to store in grid nodes.
+	using Leaf = storage_leaf_t<Storage>;
+	using Matrix = Eigen::Map<Eigen::Matrix<Leaf, Eigen::Dynamic, Eigen::Dynamic, Eigen::ColMajor>>;
+
+	felt2::Dim m_rows;
+	felt2::Dim m_cols;
+	Storage & m_storage_impl;
+
+	/**
+	 * Map the raw data to Eigen::Map, which can be used for BLAS arithmetic.
+	 *
+	 * @return Eigen compatible vector of data array.
+	 */
+	[[nodiscard]] constexpr Matrix matrix() noexcept
+	{
+		return {m_storage_impl.storage().data(), m_rows, m_cols};
+	}
+
+	[[nodiscard]] constexpr Matrix matrix() const noexcept
+	{
+		return {m_storage_impl.storage().data(), m_rows, m_cols};
+	}
+};
+
 }  // namespace felt2::components
