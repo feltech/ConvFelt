@@ -1269,9 +1269,26 @@ SCENARIO("Applying filter to ConvGrid")
 					image_grid_device->storage().assign(
 						image_grid.storage().begin(), image_grid.storage().end());
 
+					auto const num_work_groups =
+						static_cast<std::size_t>(filter_output_grid->children().size().prod());
+					auto const work_group_size =
+						static_cast<std::size_t>(filter_output_grid->child_size().prod());
+
+					CHECK(work_group_size == 16);
+
+					// Check invariants
+					CHECK(usm_weights.matrix().rows() == filter_output_grid->child_size().prod());
+					CHECK(
+						usm_weights.matrix().rows() == static_cast<Eigen::Index>(work_group_size));
+					CHECK(usm_weights.matrix().cols() == filter_input_grid->child_size().prod());
+					CHECK(usm_weights.matrix().cols() == filter_input_sizer.num_filter_elems());
+					// TODO(DF): Technically this check could fail and we still have a valid,
+					//  situation, just complicated slightly by data boundary condition.
+					CHECK(
+						filter_output_grid->storage().size() == num_work_groups * work_group_size);
+
 					sycl::nd_range<1> work_range{
-						filter_output_grid->storage().size(),
-						static_cast<size_t>(filter_output_grid->child_size().prod())};
+						num_work_groups * work_group_size, work_group_size};
 
 					q.submit(
 						[&](sycl::handler & cgh)
@@ -1281,20 +1298,8 @@ SCENARIO("Applying filter to ConvGrid")
 							filter_output_grid->set_stream(&os);
 							image_grid_device->set_stream(&os);
 
-							assert(
-								usm_weights.matrix().rows() ==
-								filter_output_grid->child_size().prod());
-							assert(
-								usm_weights.matrix().cols() ==
-								filter_input_grid->child_size().prod());
-
-							sycl::accessor<
-								felt2::Scalar,
-								1,
-								sycl::access::mode::read_write,
-								sycl::access::target::local>
-								input_child_data{
-									static_cast<std::size_t>(usm_weights.matrix().cols()), cgh};
+							sycl::local_accessor<felt2::Scalar> input_child_data{
+								static_cast<std::size_t>(usm_weights.matrix().cols()), cgh};
 
 							cgh.parallel_for<class dynamic_input>(
 								work_range,
@@ -1310,28 +1315,24 @@ SCENARIO("Applying filter to ConvGrid")
 									std::size_t const group_id = item.get_group_linear_id();
 									std::size_t const local_id = item.get_local_linear_id();
 
-									auto & input_child =
-										filter_input_template->children().get(group_id);
-									auto & output_child =
-										filter_output_grid->children().get(group_id);
-
 									auto const simd_width =
 										static_cast<felt2::PosIdx>(weights.rows());
 									auto const num_cols =
 										static_cast<felt2::PosIdx>(weights.cols());
 
+									// Deliberately copy into private memory.
+									auto input_child =
+										filter_input_template->children().get(group_id);
 									input_child.storage() =
 										std::span(input_child_data.get_pointer().get(), num_cols);
 
+									auto & output_child =
+										filter_output_grid->children().get(group_id);
+
+									// Assert invariants.
 									assert(local_id < output_child.storage().size());
+									assert(num_cols == input_child.storage().size());
 									assert(item.get_local_range(0) == simd_width);
-									assert(
-										num_cols ==
-										static_cast<felt2::PosIdx>(input_child.size().prod()));
-									assert(
-										num_cols ==
-										static_cast<felt2::PosIdx>(
-											filter_input_sizer.num_filter_elems()));
 
 									for (felt2::PosIdx simd_col = 0; simd_col < num_cols;
 										 simd_col += simd_width)
