@@ -1,5 +1,6 @@
 #define EIGEN_DEFAULT_IO_FORMAT Eigen::IOFormat(3, DontAlignCols, " ", ",", "", "", "(", ")")
 
+#include <ranges>
 #include <span>
 
 #include <sycl/sycl.hpp>
@@ -304,8 +305,8 @@ struct FilterSizeHelper
 		VecDi const filter_id = (input_pos.array() / filter_size.array()).matrix();
 		auto filter_input_start_pos = (filter_id.array() * filter_size.array()).matrix();
 		auto filter_source_start_pos = (filter_id.array() * filter_stride.array()).matrix();
-		auto input_filter_local_pos = input_pos - filter_input_start_pos;
-		auto source_pos = filter_source_start_pos + input_filter_local_pos;
+		auto filter_local_pos = input_pos - filter_input_start_pos;
+		auto source_pos = filter_source_start_pos + filter_local_pos;
 
 		return source_pos;
 	}
@@ -336,14 +337,14 @@ struct FilterSizeHelper
 		VecDi filter_pos_first = zero;
 		VecDi filter_pos_last = zero;
 
-		[[maybe_unused]] auto const one_window = one.template head<2>();
-		auto const zero_window = zero.template head<2>();
-		auto const source_size_window = source_size.template head<2>();
-		auto const source_pos_window = source_pos.template head<2>();
-		auto const filter_size_window = filter_size.template head<2>();
-		auto const filter_stride_window = filter_stride.template head<2>();
-		auto filter_pos_first_window = filter_pos_first.template head<2>();
-		auto filter_pos_last_window = filter_pos_last.template head<2>();
+		[[maybe_unused]] auto const one_window = one.template head<D - 1>();
+		auto const zero_window = zero.template head<D - 1>();
+		auto const source_size_window = source_size.template head<D - 1>();
+		auto const source_pos_window = source_pos.template head<D - 1>();
+		auto const filter_size_window = filter_size.template head<D - 1>();
+		auto const filter_stride_window = filter_stride.template head<D - 1>();
+		auto filter_pos_first_window = filter_pos_first.template head<D - 1>();
+		auto filter_pos_last_window = filter_pos_last.template head<D - 1>();
 
 		filter_pos_last_window.array() =
 			source_pos_window.array().min(source_size_window.array() - filter_size_window.array()) /
@@ -356,6 +357,7 @@ struct FilterSizeHelper
 				.max(zero_window.array()) /
 			filter_stride_window.array();
 
+		// TODO(DF): Make n-dimensional
 		for (felt2::Dim x = filter_pos_first(0); x <= filter_pos_last(0); ++x)
 			for (felt2::Dim y = filter_pos_first(1); y <= filter_pos_last(1); ++y)
 			{
@@ -1008,7 +1010,7 @@ SCENARIO("Applying filter to ConvGrid")
 		{
 			sycl::context ctx;
 			sycl::device dev{sycl::gpu_selector_v};
-			[[maybe_unused]] sycl::device cpu_dev{sycl::cpu_selector_v};
+			//			sycl::device dev{sycl::cpu_selector_v};
 			using FilterGrid = convfelt::ConvGridTD<felt2::Scalar, 3, true>;
 
 			FilterSizeHelper const filter_input_sizer{felt2::Vec3i{4, 4, 3}, felt2::Vec3i{2, 2, 0}};
@@ -1214,7 +1216,7 @@ SCENARIO("Applying filter to ConvGrid")
 									// TODO(DF): Do we need to construct filter input regions in
 									//  global memory only to copy out again into local memory? I.e.
 									//  will we need the input grid further down the line? Otherwise
-									//  could construct input region here.
+									//  could construct input region here - see next test.
 									item.async_work_group_copy(
 											input_child_data.get_pointer(),
 											sycl::global_ptr<felt2::Scalar>{
@@ -1269,21 +1271,58 @@ SCENARIO("Applying filter to ConvGrid")
 					image_grid_device->storage().assign(
 						image_grid.storage().begin(), image_grid.storage().end());
 
-					auto const num_work_groups =
+					auto const filters_per_image =
 						static_cast<std::size_t>(filter_output_grid->children().size().prod());
-					auto const work_group_size =
+					auto const elems_per_filter =
 						static_cast<std::size_t>(filter_output_grid->child_size().prod());
 
-					CHECK(work_group_size == 16);
+					std::size_t const ideal_elems_per_work_group =
+						dev.get_info<sycl::info::device::sub_group_sizes>()[0];
+					std::size_t const elems_per_image = elems_per_filter * filters_per_image;
+
+					CHECK(
+						elems_per_image ==
+						static_cast<std::size_t>(filter_output_grid->size().prod()));
+					CHECK(elems_per_image == filter_output_grid->storage().size());
+
+					constexpr auto scalar = [](auto v) { return static_cast<felt2::Scalar>(v); };
+
+					felt2::Scalar const ideal_work_groups_per_image =
+						scalar(elems_per_image) / scalar(ideal_elems_per_work_group);
+
+					felt2::Scalar const ideal_filters_per_work_group =
+						scalar(filters_per_image) / ideal_work_groups_per_image;
+
+					auto const filters_per_work_group =
+						static_cast<std::size_t>(std::ceil(ideal_filters_per_work_group));
+
+					felt2::Scalar const work_groups_per_image =
+						scalar(filters_per_image) / scalar(filters_per_work_group);
+
+					felt2::Scalar const elems_per_work_group =
+						scalar(elems_per_image) / work_groups_per_image;
+
+					auto const num_work_groups =
+						static_cast<std::size_t>(std::ceil(work_groups_per_image));
+					auto const work_group_size = std::min(
+						static_cast<std::size_t>(std::ceil(elems_per_work_group)), elems_per_image);
+
+					CHECK(
+						dev.get_info<sycl::info::device::local_mem_size>() > sizeof(felt2::Scalar) *
+							static_cast<std::size_t>(filter_input_sizer.num_filter_elems()));
+					CAPTURE(dev.get_info<sycl::info::device::sub_group_sizes>());
+					CHECK(
+						dev.get_info<sycl::info::device::sub_group_sizes>()[0] <= work_group_size);
 
 					// Check invariants
 					CHECK(usm_weights.matrix().rows() == filter_output_grid->child_size().prod());
 					CHECK(
-						usm_weights.matrix().rows() == static_cast<Eigen::Index>(work_group_size));
+						usm_weights.matrix().rows() <= static_cast<Eigen::Index>(work_group_size));
 					CHECK(usm_weights.matrix().cols() == filter_input_grid->child_size().prod());
 					CHECK(usm_weights.matrix().cols() == filter_input_sizer.num_filter_elems());
-					// TODO(DF): Technically this check could fail and we still have a valid,
-					//  situation, just complicated slightly by data boundary condition.
+					// TODO(DF): Technically this check could fail and we still have a valid
+					//  situation, just complicated slightly by data boundary condition... or could
+					//  it?
 					CHECK(
 						filter_output_grid->storage().size() == num_work_groups * work_group_size);
 
@@ -1298,14 +1337,18 @@ SCENARIO("Applying filter to ConvGrid")
 							filter_output_grid->set_stream(&os);
 							image_grid_device->set_stream(&os);
 
-							sycl::local_accessor<felt2::Scalar> input_child_data{
-								static_cast<std::size_t>(usm_weights.matrix().cols()), cgh};
+							sycl::local_accessor<felt2::Scalar, 2> input_child_data{
+								sycl::range(
+									filters_per_work_group,
+									static_cast<std::size_t>(usm_weights.matrix().cols())),
+								cgh};
 
 							cgh.parallel_for<class dynamic_input>(
 								work_range,
 								[image_grid = image_grid_device.get(),
 								 filter_input_template = filter_input_template.get(),
 								 filter_output_grid = filter_output_grid.get(),
+								 filters_per_work_group,
 								 weights = usm_weights.matrix(),
 								 input_child_data,
 								 filter_input_sizer,
@@ -1315,29 +1358,41 @@ SCENARIO("Applying filter to ConvGrid")
 									std::size_t const group_id = item.get_group_linear_id();
 									std::size_t const local_id = item.get_local_linear_id();
 
-									auto const simd_width =
-										static_cast<felt2::PosIdx>(weights.rows());
+									felt2::PosIdx const elems_per_work_group =
+										item.get_local_range(0);
+									felt2::PosIdx const elems_per_filter =
+										elems_per_work_group / filters_per_work_group;
+
+									felt2::PosIdx const filter_idx_offset_for_item =
+										local_id / elems_per_filter;
+									felt2::PosIdx const filter_idx_for_item =
+										group_id * filters_per_work_group +
+										filter_idx_offset_for_item;
+									felt2::PosIdx const elem_idx_for_item =
+										local_id - filter_idx_offset_for_item * elems_per_filter;
+
 									auto const num_cols =
 										static_cast<felt2::PosIdx>(weights.cols());
 
 									// Deliberately copy into private memory.
 									auto input_child =
-										filter_input_template->children().get(group_id);
-									input_child.storage() =
-										std::span(input_child_data.get_pointer().get(), num_cols);
+										filter_input_template->children().get(filter_idx_for_item);
+									input_child.storage() = std::span(
+										&input_child_data[filter_idx_offset_for_item][0], num_cols);
 
 									auto & output_child =
-										filter_output_grid->children().get(group_id);
+										filter_output_grid->children().get(filter_idx_for_item);
 
 									// Assert invariants.
-									assert(local_id < output_child.storage().size());
 									assert(num_cols == input_child.storage().size());
-									assert(item.get_local_range(0) == simd_width);
+									assert(
+										static_cast<felt2::PosIdx>(weights.rows()) <=
+										elems_per_filter);
 
 									for (felt2::PosIdx simd_col = 0; simd_col < num_cols;
-										 simd_col += simd_width)
+										 simd_col += elems_per_filter)
 									{
-										felt2::PosIdx const col = simd_col + local_id;
+										felt2::PosIdx const col = simd_col + elem_idx_for_item;
 										if (col >= num_cols)
 											break;
 
@@ -1349,9 +1404,13 @@ SCENARIO("Applying filter to ConvGrid")
 										input_child.set(col, image_grid->get(pos_in_source_grid));
 									}
 
+									if (elem_idx_for_item > output_child.storage().size())
+										return;
+
 									item.barrier(sycl::access::fence_space::local_space);
 
-									auto const row_idx = static_cast<Eigen::Index>(local_id);
+									auto const row_idx =
+										static_cast<Eigen::Index>(elem_idx_for_item);
 
 									output_child.matrix()(row_idx) =
 										weights.row(row_idx).dot(input_child.matrix());
