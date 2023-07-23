@@ -1113,7 +1113,7 @@ SCENARIO("Applying filter to ConvGrid")
 				}
 			}
 
-			AND_GIVEN("an output grid and weight matrix")
+			AND_GIVEN("an output image and weight matrix")
 			{
 				FilterSizeHelper const filter_output_sizer{felt2::Vec3i{2, 2, 4}};
 
@@ -1307,10 +1307,12 @@ SCENARIO("Applying filter to ConvGrid")
 					auto const work_group_size = std::min(
 						static_cast<std::size_t>(std::ceil(elems_per_work_group)), elems_per_image);
 
+					CAPTURE(
+						dev.get_info<sycl::info::device::local_mem_size>(),
+						dev.get_info<sycl::info::device::sub_group_sizes>());
 					CHECK(
 						dev.get_info<sycl::info::device::local_mem_size>() > sizeof(felt2::Scalar) *
 							static_cast<std::size_t>(filter_input_sizer.num_filter_elems()));
-					CAPTURE(dev.get_info<sycl::info::device::sub_group_sizes>());
 					CHECK(
 						dev.get_info<sycl::info::device::sub_group_sizes>()[0] <= work_group_size);
 
@@ -1377,6 +1379,12 @@ SCENARIO("Applying filter to ConvGrid")
 									// Deliberately copy into private memory.
 									auto input_child =
 										filter_input_template->children().get(filter_idx_for_item);
+									// TODO(DF): For large filters (e.g. fully connected layers)
+									//  should fall back to global memory?  Or refactor kernel
+									//  somehow?  For fully connected layer, input_child is the same
+									//  image_grid, so no need to sample into local memory. So
+									//  perhaps safe to assume either that fully connected case or
+									//  small-enough filters for local memory?
 									input_child.storage() = std::span(
 										&input_child_data[filter_idx_offset_for_item][0], num_cols);
 
@@ -1422,7 +1430,7 @@ SCENARIO("Applying filter to ConvGrid")
 					{
 						assert_expected_values();
 					}
-				}  // WHEN("filter is applied to grid using Eigen in a hand-rolled kernel")
+				}  // WHEN("filter is applied in kernel that computes filter input on the fly")
 
 				WHEN("filter is applied to grid using oneMKL")
 				{
@@ -1458,7 +1466,88 @@ SCENARIO("Applying filter to ConvGrid")
 						assert_expected_values();
 					}
 				}
+			}  // AND_GIVEN("an output image and weight matrix")
+
+			AND_GIVEN("an output vector and weight matrix")
+			{
+				FilterSizeHelper const filter_output_sizer{felt2::Vec3i(1, 1, 5)};
+
+				auto filter_output_grid = convfelt::make_unique_sycl<FilterGrid>(
+					dev,
+					ctx,
+					filter_output_sizer.output_size_from_num_filter_regions(felt2::Vec3i::Ones()),
+					filter_output_sizer.filter_window(),
+					ctx,
+					dev);
+
+				REQUIRE(filter_output_grid->children().size() == felt2::Vec3i(1, 1, 1));
+
+				convfelt::USMMatrix usm_weights{
+					filter_output_sizer.num_filter_elems(), image_grid.size().prod(), dev, ctx};
+
+				usm_weights.matrix().setRandom();
+
+				auto const assert_expected_values = [&]
+				{
+					for (auto const & filter_pos_idx :
+						 convfelt::iter::pos_idx(filter_output_grid->children()))
+					{
+						const felt2::Vec3i filter_pos =
+							filter_input_grid->children().index(filter_pos_idx);
+						CAPTURE(filter_pos);
+
+						auto const input_matrix = image_grid.matrix();
+						auto const output_matrix = filter_output_grid->matrix();
+						CAPTURE(usm_weights.matrix() * input_matrix, output_matrix);
+						auto const diff = usm_weights.matrix() * input_matrix - output_matrix;
+						felt2::Scalar const diff_sq = diff.dot(diff);
+						CHECK(diff_sq == Approx(0).margin(1e-6));
+					}
+				};
+
+				WHEN("filter is applied to grid using oneMKL")
+				{
+					sycl::queue q{ctx, dev};
+
+					auto image_grid_device =
+						convfelt::make_unique_sycl<convfelt::ByValue<felt2::Scalar, 3, true>>(
+							dev, ctx, image_grid.size(), image_grid.offset(), 0.0f, ctx, dev);
+
+					image_grid_device->storage().assign(
+						image_grid.storage().begin(), image_grid.storage().end());
+
+
+					oneapi::mkl::blas::column_major::gemm(
+						q,
+						oneapi::mkl::transpose::nontrans,
+						oneapi::mkl::transpose::nontrans,
+						// m: Rows of output / rows of weights
+						filter_output_grid->matrix().rows(),
+						// n: Columns of output / columns of input
+						filter_output_grid->matrix().cols(),
+						// k: Rows of input / columns of weights
+						image_grid_device->matrix().rows(),
+						// alpha
+						1,
+						// a: weights
+						usm_weights.matrix().data(),
+						usm_weights.matrix().rows(),
+						// b: input
+						image_grid_device->matrix().data(),
+						image_grid_device->matrix().rows(),
+						// beta
+						0,
+						// c: output
+						filter_output_grid->matrix().data(),
+						filter_output_grid->matrix().rows());
+
+					q.wait_and_throw();
+					THEN("values are as expected")
+					{
+						assert_expected_values();
+					}
+				}
 			}
-		}
+		}  // AND_GIVEN("image is split into filter regions")
 	}
 }

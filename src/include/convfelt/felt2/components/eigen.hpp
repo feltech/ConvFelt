@@ -17,7 +17,7 @@ struct EigenMap
 	using ColArrayMap = Eigen::Map<Eigen::Array<Leaf, 1, Eigen::Dynamic>, Eigen::ColMajor>;
 	using ColVectorMap = Eigen::Map<Eigen::Matrix<Leaf, Eigen::Dynamic, 1>, Eigen::ColMajor>;
 
-	Storage const & m_storage_impl;
+	Storage & m_storage_impl;
 
 	/**
 	 * Map the raw data to a (column-major) Eigen::Map, which can be used for BLAS arithmetic.
