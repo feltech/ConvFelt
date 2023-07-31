@@ -96,7 +96,6 @@ include(${CMAKE_BINARY_DIR}/conan.cmake)
 find_package(oneMKL CONFIG REQUIRED)
 message(STATUS "${MKL_IMPORTED_TARGETS}") #Provides available list of targets based on input
 target_compile_definitions(MKL::onemkl INTERFACE ENABLE_CUBLAS_BACKEND)
-target_link_directories(MKL::onemkl INTERFACE "/home/dave/workspace/oneMKL/cmake-build-debug-clang-14/lib")
 
 #------------------------------------------------------------
 # Add project_options CMake library
@@ -144,6 +143,10 @@ CPMAddPackage(
 conan_cmake_configure(
 	REQUIRES
 
+	# Pin to boost version such that OpenImageIO supports boost::filesystem without undefined
+	# references
+	boost/1.77.0
+
 	# String formatting. Must override dependency of openimageio or get ambiguous calls to
 	# `std::signbit` et al.
 	fmt/7.1.3
@@ -152,7 +155,7 @@ conan_cmake_configure(
 	eigen/3.4.0
 
 	# OpenImageIO image loading/processing library
-	openimageio/2.3.7.2
+	openimageio/2.4.7.1
 	# Override to >=v3 so that Imath is used, rather than a fallback (OIIO_USING_IMATH), which works
 	# around "error: definition of type 'half' conflicts with typedef of the same name" when CUDA
 	# (via OpenSYCL) is also included.

@@ -1,5 +1,87 @@
-# Prerequisites
+# Notes
 
+Attempting to use Conda.
+
+Starting with clang-16 ... but see later - downgraded to clang-14, so some of these earlier steps
+may not be necessary
+
+### 1
+>   Expecting to find librt for libcudart_static, but didn't find it.
+> Call Stack (most recent call first):
+> cmake/FindcuBLAS.cmake:20 (find_package)
+> src/blas/backends/cublas/CMakeLists.txt:22 (find_package)
+1. Ensure Conda environment is searched by preference.
+2. CUDA requires librt, which is in the sysroot directory.
+```
+export CMAKE_PREFIX_PATH="$CONDA_PREFIX:$CONDA_PREFIX/$(clang++ -print-target-triple)/sysroot/usr:$CMAKE_PREFIX_PATH"
+```
+but once clang downgraded to 14 (see later), the target triple no longer matches, so
+```
+export CMAKE_PREFIX_PATH="$CONDA_PREFIX:$(x86_64-conda-linux-gnu-gcc -print-sysroot)/usr${CMAKE_PREFIX_PATH:+:$CMAKE_PREFIX_PATH}"
+```
+
+
+### 2
+> -- Found CUDA: /opt/conda/envs/sycl (found suitable version "12.2", minimum required is "10.0")
+> CMake Error at /snap/clion/248/bin/cmake/linux/x64/share/cmake-3.26/Modules/FindPackageHandleStandardArgs.cmake:230 (message):
+> Could NOT find cuBLAS (missing: CUDA_CUDA_LIBRARY)
+> Call Stack (most recent call first):
+> /snap/clion/248/bin/cmake/linux/x64/share/cmake-3.26/Modules/FindPackageHandleStandardArgs.cmake:600 (_FPHSA_FAILURE_MESSAGE)
+> cmake/FindcuBLAS.cmake:40 (find_package_handle_standard_args)
+> src/blas/backends/cublas/CMakeLists.txt:23 (find_package)
+
+CUDA puts some .so files under a "stubs" drectory.
+```
+export CMAKE_LIBRARY_PATH="$CONDA_PREFIX/lib/stubs:$CMAKE_LIBRARY_PATH"
+```
+
+### 3
+
+> Could NOT find OpenMP_C (missing: OpenMP_C_FLAGS OpenMP_C_LIB_NAMES)
+
+OpenMP `omp.h` gets installed in an odd location, as well as the top-level `./include`, neither of
+which are in the default include search path for clang.
+
+Temporary fix until https://github.com/conda-forge/openmp-feedstock/issues/24 (my comment lower 
+down):
+```sh
+export CPATH="$CONDA_PREFIX/include:$CPATH"
+```
+
+### 4
+```
+../shared_ptr_base.h:196:22: error: use of undeclared identifier 'noinline'; did you mean 'inline'?
+__attribute__((__noinline__))
+```
+Because https://github.com/llvm/llvm-project/issues/57544#issuecomment-1238812567
+
+Actual fix available in clang 17, but clang 17 not yet in conda.
+
+Must downgrade to libstdc++ 11.3, which in conda means also downgrading clang to 14.
+
+Though once downgraded, building OpenSYCL works, but then oneMKL
+
+> .../clang/14.0.0/include/__clang_cuda_texture_intrinsics.h:696:13: error: no template named 'texture'
+            texture<__DataT, __TexT, cudaReadModeNormalizedFloat> __handle,
+
+Presumably too new CUDA - downgrade to 11.5 seems to fix it.
+
+### 5
+
+> lib/libOpenImageIO_Util.so.2.3.7: undefined reference to `boost::filesystem::path::operator/=(boost::filesystem::path const&)'
+
+Presumably because clang-14 is detected as not supporting std::filesystem so OIIO tries to use boost
+but has some incompatibility  - must downgrade boost to 1.71.
+
+### 6
+
+Assertion with `cudaCreate : CUBLAS_STATUS_NOT_INITIALIZED`.
+
+Downgrade libcublas to same major version as cuda (frustrating conda allowed incompatible versions 
+- seems to assume backward compatibility).
+
+
+## Older:
 * Ubuntu 20.04
 * C++20 coroutines, which requires `libc++` for clang support, which brings a lot of trouble (see
   below).

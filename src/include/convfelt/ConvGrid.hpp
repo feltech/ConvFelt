@@ -95,7 +95,7 @@ public:
 	};
 
 	using VecDi = felt2::VecDi<Traits::k_dims>;
-	using Leaf = Traits::Leaf;
+	using Leaf = typename Traits::Leaf;
 
 	using SizeImpl = felt2::components::Size<Traits>;
 	using StreamImpl = felt2::components::Stream;
@@ -218,7 +218,7 @@ public:
 	};
 
 	using VecDi = felt2::VecDi<Traits::k_dims>;
-	using Leaf = Traits::Leaf;
+	using Leaf = typename Traits::Leaf;
 
 	using SizeImpl = felt2::components::Size<Traits>;
 	using StreamImpl = felt2::components::Stream;
@@ -319,7 +319,7 @@ public:
 	};
 
 	using VecDi = felt2::VecDi<Traits::k_dims>;
-	using Leaf = Traits::Leaf;
+	using Leaf = typename Traits::Leaf;
 
 	using SizeImpl = felt2::components::ResizableSize<Traits>;
 	using StreamImpl = felt2::components::Stream;
@@ -446,7 +446,7 @@ public:
 	};
 
 	using VecDi = felt2::VecDi<Traits::k_dims>;
-	using Leaf = Traits::Leaf;
+	using Leaf = typename Traits::Leaf;
 	using Child = FilterTD<Leaf, Traits::k_dims>;
 	using ChildrenGrid = ByRef<Child, Traits::k_dims, is_device_shared>;
 
@@ -613,7 +613,7 @@ public:
 	};
 
 	using VecDi = felt2::VecDi<Traits::k_dims>;
-	using Leaf = Traits::Leaf;
+	using Leaf = typename Traits::Leaf;
 	using Child = FilterTD<Leaf, Traits::k_dims>;
 	using ChildrenGrid = ByRef<Child, Traits::k_dims, is_device_shared>;
 
