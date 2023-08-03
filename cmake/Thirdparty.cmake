@@ -39,18 +39,20 @@ if (NOT (EXISTS ${CPM_DOWNLOAD_LOCATION}))
 	file(DOWNLOAD
 		https://github.com/TheLartians/CPM.cmake/releases/download/v${CPM_DOWNLOAD_VERSION}/CPM.cmake
 		${CPM_DOWNLOAD_LOCATION}
-		)
+	)
 endif ()
 
 include(${CPM_DOWNLOAD_LOCATION})
-
+set(CONVFELT_DEPENDENCIES_INSTALL_PREFIX "${PROJECT_BINARY_DIR}/dependencies" CACHE PATH
+	"Install tree for build dependencies")
+list(APPEND CMAKE_PREFIX_PATH ${CONVFELT_DEPENDENCIES_INSTALL_PREFIX})
 
 #------------------------------------------------------------
 # Install Conan package manager CMake helpers
 
 # conan.cmake uses build tree, and can't be configured otherwise, annoyingly.
-list(APPEND CMAKE_MODULE_PATH ${CMAKE_BINARY_DIR})
-list(APPEND CMAKE_PREFIX_PATH ${CMAKE_BINARY_DIR})
+list(APPEND CMAKE_MODULE_PATH ${PROJECT_BINARY_DIR})
+list(APPEND CMAKE_PREFIX_PATH ${PROJECT_BINARY_DIR})
 
 if (NOT EXISTS "${CMAKE_BINARY_DIR}/conan.cmake")
 	message(STATUS "Downloading conan.cmake from https://github.com/conan-io/cmake-conan")
@@ -128,14 +130,58 @@ set(ENABLE_SANITIZER_UNDEFINED_BEHAVIOR_DEFAULT OFF)
 # Generate project_options and project_warnings INTERFACE targets.
 dynamic_project_options()
 
+function(convfelt_cpm_install_package package_name gh_repo git_tag)
+	CPMAddPackage(
+		NAME ${package_name}
+		SYSTEM YES
+		EXCLUDE_FROM_ALL YES
+		DOWNLOAD_ONLY YES
+		GIT_TAG ${git_tag}
+		GIT_REPOSITORY https://github.com/${gh_repo}.git
+	)
+	find_package(${package_name} CONFIG QUIET)
+	if (NOT DEFINED ${package_name}_CONFIG)
+		execute_process(
+			COMMAND ${CMAKE_COMMAND}
+			-S ${${package_name}_SOURCE_DIR} -B ${${package_name}_BINARY_DIR}
+			-DCMAKE_BUILD_TYPE=RelWithDebInfo
+			COMMAND_ERROR_IS_FATAL ANY
+		)
+		execute_process(
+			COMMAND ${CMAKE_COMMAND}
+			--build ${${package_name}_BINARY_DIR} --config RelWithDebInfo --parallel
+			COMMAND_ERROR_IS_FATAL ANY
+		)
+		execute_process(
+			COMMAND ${CMAKE_COMMAND}
+			--install ${${package_name}_BINARY_DIR} --prefix ${CONVFELT_DEPENDENCIES_INSTALL_PREFIX}
+			COMMAND_ERROR_IS_FATAL ANY
+		)
+	endif ()
+	find_package(${package_name} CONFIG REQUIRED)
+endfunction()
+
 #------------------------------------------------------------
 # cppcoro C++20 coroutines library
-
 # Use CPM rather than Conan, since the (current) Conan recipe forces `-fcoroutines-ts`, which is
 # removed in clang-17.
-CPMAddPackage(
-	"gh:andreasbuhr/cppcoro#main"
-)
+convfelt_cpm_install_package(cppcoro andreasbuhr/cppcoro main)
+
+#------------------------------------------------------------
+# Testing libraries
+
+if (CONVFELT_ENABLE_TESTS)
+
+	#------------------------------------------------------------
+	# Catch2 testing library
+
+	convfelt_cpm_install_package(Catch2 catchorg/Catch2 v3.4.0)
+
+	#------------------------------------------------------------
+	# Trompeloeil mocking library
+
+	convfelt_cpm_install_package(trompeloeil rollbear/trompeloeil v42)
+endif ()
 
 #------------------------------------------------------------
 # Load dependencies via Conan package manager
@@ -207,21 +253,5 @@ find_package(Eigen3 REQUIRED)
 # Work around Eigen<=3.4.0 C++20 incompatibility
 target_compile_definitions(Eigen3::Eigen INTERFACE EIGEN_HAS_STD_RESULT_OF=0)
 find_package(OpenImageIO REQUIRED)
-find_package(cppcoro REQUIRED)
-add_library(cppcoro::cppcoro ALIAS cppcoro)
+#add_library(cppcoro::cppcoro ALIAS cppcoro)
 find_package(range-v3 REQUIRED)
-
-
-#------------------------------------------------------------
-# Testing libraries
-
-if (CONVFELT_ENABLE_TESTS)
-	#------------------------------------------------------------
-	# Catch2 testing library
-	CPMAddPackage("gh:catchorg/Catch2@2.13.8")
-	include(${Catch2_SOURCE_DIR}/contrib/Catch.cmake)
-
-	#------------------------------------------------------------
-	# Trompeloeil mocking library
-	CPMAddPackage("gh:rollbear/trompeloeil@42")
-endif ()

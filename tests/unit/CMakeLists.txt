@@ -3,7 +3,6 @@
 
 add_executable(
 	convfelt.test.unit
-	main.cpp
 	third_party.cpp
 )
 
@@ -18,7 +17,7 @@ target_link_libraries(
 target_link_system_libraries(
 	convfelt.test.unit
 	PRIVATE
-	Catch2 trompeloeil
+	Catch2::Catch2WithMain trompeloeil::trompeloeil
 	OpenImageIO::OpenImageIO
 	cppcoro::cppcoro
 	range-v3::range-v3

@@ -22,7 +22,6 @@ using span = std::span<Args...>;
 #define was_SYCL_DEVICE_ONLY SYCL_DEVICE_ONLY
 #undef SYCL_DEVICE_ONLY
 #endif
-
 #include <Eigen/Eigen>
 #ifdef was_SYCL_DEVICE_ONLY
 #define SYCL_DEVICE_ONLY was_SYCL_DEVICE_ONLY
@@ -45,7 +44,9 @@ using span = std::span<Args...>;
 #include <OpenImageIO/imagebufalgo.h>
 #include <OpenImageIO/imageio.h>
 
-#include <catch2/catch.hpp>
+#include <catch2/catch_test_macros.hpp>
+#include <catch2/catch_approx.hpp>
+
 #include <cppcoro/static_thread_pool.hpp>
 #include <cppcoro/sync_wait.hpp>
 #include <cppcoro/task.hpp>
@@ -1501,7 +1502,7 @@ SCENARIO("Applying filter to ConvGrid")
 						CAPTURE(usm_weights.matrix() * input_matrix, output_matrix);
 						auto const diff = usm_weights.matrix() * input_matrix - output_matrix;
 						felt2::Scalar const diff_sq = diff.dot(diff);
-						CHECK(diff_sq == Approx(0).margin(1e-6));
+						CHECK(diff_sq == Catch::Approx(0).margin(1e-6));
 					}
 				};
 
