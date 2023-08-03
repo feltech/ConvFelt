@@ -4,12 +4,12 @@
 #include <span>
 
 #include <sycl/sycl.hpp>
-namespace sycl
-{
-// Required for MKL.
-template <typename... Args>
-using span = std::span<Args...>;
-}  // namespace sycl
+//namespace sycl
+//{
+//// Required for MKL.
+//template <typename... Args>
+//using span = std::span<Args...>;
+//}  // namespace sycl
 #include <oneapi/mkl.hpp>
 
 // Eigen
