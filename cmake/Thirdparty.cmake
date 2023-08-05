@@ -1,3 +1,5 @@
+include(GNUInstallDirs)
+
 #------------------------------------------------------------
 # System dependencies
 
@@ -45,7 +47,12 @@ endif ()
 include(${CPM_DOWNLOAD_LOCATION})
 set(CONVFELT_DEPENDENCIES_INSTALL_PREFIX "${PROJECT_BINARY_DIR}/dependencies" CACHE PATH
 	"Install tree for build dependencies")
+
 list(APPEND CMAKE_PREFIX_PATH ${CONVFELT_DEPENDENCIES_INSTALL_PREFIX})
+
+# Allow any build of libraries to be used for other configurations.
+set(CMAKE_MAP_IMPORTED_CONFIG_RELWITHDEBINFO Release;RelWithDebInfo;Debug;)
+
 
 #------------------------------------------------------------
 # Install Conan package manager CMake helpers
@@ -144,7 +151,12 @@ function(convfelt_cpm_install_package package_name gh_repo git_tag)
 		execute_process(
 			COMMAND ${CMAKE_COMMAND}
 			-S ${${package_name}_SOURCE_DIR} -B ${${package_name}_BINARY_DIR}
+			--compile-no-warning-as-error
 			-DCMAKE_BUILD_TYPE=RelWithDebInfo
+			# Frustratingly, will probably just need to add more of these, unless insisting on a
+			# well-behaved library.
+			-DCMAKE_CXX_FLAGS=-Wno-error=implicit-int-float-conversion
+			${ARGN}
 			COMMAND_ERROR_IS_FATAL ANY
 		)
 		execute_process(
@@ -161,27 +173,6 @@ function(convfelt_cpm_install_package package_name gh_repo git_tag)
 	find_package(${package_name} CONFIG REQUIRED)
 endfunction()
 
-#------------------------------------------------------------
-# cppcoro C++20 coroutines library
-# Use CPM rather than Conan, since the (current) Conan recipe forces `-fcoroutines-ts`, which is
-# removed in clang-17.
-convfelt_cpm_install_package(cppcoro andreasbuhr/cppcoro main)
-
-#------------------------------------------------------------
-# Testing libraries
-
-if (CONVFELT_ENABLE_TESTS)
-
-	#------------------------------------------------------------
-	# Catch2 testing library
-
-	convfelt_cpm_install_package(Catch2 catchorg/Catch2 v3.4.0)
-
-	#------------------------------------------------------------
-	# Trompeloeil mocking library
-
-	convfelt_cpm_install_package(trompeloeil rollbear/trompeloeil v42)
-endif ()
 
 #------------------------------------------------------------
 # Load dependencies via Conan package manager
@@ -255,3 +246,51 @@ target_compile_definitions(Eigen3::Eigen INTERFACE EIGEN_HAS_STD_RESULT_OF=0)
 find_package(OpenImageIO REQUIRED)
 #add_library(cppcoro::cppcoro ALIAS cppcoro)
 find_package(range-v3 REQUIRED)
+
+#------------------------------------------------------------
+# cppcoro C++20 coroutines library
+# Use CPM rather than Conan, since the (current) Conan recipe forces `-fcoroutines-ts`, which is
+# removed in clang-17.
+convfelt_cpm_install_package(cppcoro andreasbuhr/cppcoro main)
+
+#------------------------------------------------------------
+# Testing libraries
+
+if (CONVFELT_ENABLE_TESTS)
+
+	#------------------------------------------------------------
+	# Catch2 testing library
+
+	convfelt_cpm_install_package(Catch2 catchorg/Catch2 v3.4.0)
+
+	#------------------------------------------------------------
+	# Trompeloeil mocking libraryk
+
+	convfelt_cpm_install_package(trompeloeil rollbear/trompeloeil v42)
+
+
+	#------------------------------------------------------------
+	# cucumber-cpp BDD testing libary
+
+	# Lots of moving parts to get this set up. Not maintained. CMake config file install location
+	# not on default search path. Client-server based (tricky IDE/debugging). Client is a Ruby tool,
+	# so must install Ruby (and downgrade to <3.2). Auto-downloads a specific version of GTest for
+	# building against, but then doesn't install it.
+#	convfelt_cpm_install_package(
+#		CucumberCpp cucumber/cucumber-cpp main
+#		-DCUKE_ENABLE_BOOST_TEST=OFF
+#		-DCUKE_ENABLE_QT=OFF
+#		-DCUKE_TESTS_E2E=OFF
+#		-DCUKE_TESTS_UNIT=OFF)
+
+
+	# Lib looks good, but is a badly-behaved CMake package - additional vars required to disable
+	# tests, adds `-Werror` despite warnings from included third-party libraries, and doesn't
+	# include a CMake config file.
+	convfelt_cpm_install_package(
+		GUnit cpp-testing/GUnit v1.13.0
+		-DGUNIT_BUILD_BENCHMARKS=OFF -DGUNIT_BUILD_EXAMPLES=OFF -DGUNIT_BUILD_TESTS=OFF
+		# Use a shim file to set up installable target.
+		-DCMAKE_PROJECT_GUnit_INCLUDE=${CMAKE_CURRENT_LIST_DIR}/GUnit_include.cmake
+	)
+endif ()
