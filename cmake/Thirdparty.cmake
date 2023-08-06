@@ -292,5 +292,6 @@ if (CONVFELT_ENABLE_TESTS)
 		-DGUNIT_BUILD_BENCHMARKS=OFF -DGUNIT_BUILD_EXAMPLES=OFF -DGUNIT_BUILD_TESTS=OFF
 		# Use a shim file to set up installable target.
 		-DCMAKE_PROJECT_GUnit_INCLUDE=${CMAKE_CURRENT_LIST_DIR}/GUnit_include.cmake
+		-DCMAKE_PROJECT_gherkin-cpp_INCLUDE=${CMAKE_CURRENT_LIST_DIR}/gherkin-cpp_include.cmake
 	)
 endif ()

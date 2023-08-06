@@ -1,6 +1,8 @@
 # Copyright 2022 David Feltell
 # SPDX-License-Identifier: MIT
-cmake_minimum_required(VERSION 3.22)
+
+# 3.27 - adds COMPILE_ONLY
+cmake_minimum_required(VERSION 3.27)
 
 # Helper CMake modules
 list(APPEND CMAKE_MODULE_PATH "${CMAKE_CURRENT_LIST_DIR}/cmake")
