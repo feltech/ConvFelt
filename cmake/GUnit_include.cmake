@@ -7,27 +7,10 @@ message(STATUS "Injecting install logic into ${PROJECT_NAME}")
 # symbols.
 set(CMAKE_POSITION_INDEPENDENT_CODE ON)
 
+# Don't build/install anything unless explicitly asked.
+set_directory_properties(PROPERTIES EXCLUDE_FROM_ALL TRUE)
+
 macro(configure_gunit_install_target)
-	get_target_property(gunit_INTERFACE_LINK_LIBRARIES gunit INTERFACE_LINK_LIBRARIES)
-	get_target_property(gunit_INTERFACE_INCLUDE_DIRECTORIES gunit INTERFACE_INCLUDE_DIRECTORIES)
-	# We're going to compile everything into a shared lib with WHOLE_ARCHIVE option, so avoid
-	# conflicts by blanking out source gunit target's install interface.
-	set_target_properties(
-		gunit
-		PROPERTIES
-		INTERFACE_LINK_LIBRARIES ""
-		INTERFACE_INCLUDE_DIRECTORIES ""
-	)
-	target_link_libraries(
-		gunit
-		INTERFACE
-		$<BUILD_INTERFACE:${gunit_INTERFACE_LINK_LIBRARIES}>
-	)
-	target_include_directories(
-		gunit
-		INTERFACE
-		$<BUILD_INTERFACE:${gunit_INTERFACE_INCLUDE_DIRECTORIES}>
-	)
 	# Create wrapper shared library to bundle GUnit and all its binary dependencies.
 	#
 	# Much much simpler than trying to shim all the bad CMake of the various dependencies to create
