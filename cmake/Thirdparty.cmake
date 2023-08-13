@@ -180,12 +180,22 @@ endfunction()
 conan_cmake_configure(
 	REQUIRES
 
+	# Required for CucumberCpp (it bundles it but doesn't install it)
+	gtest/1.14.0
+
+	# For parametrising network structure.
+	yaml-cpp/0.7.0
+
 	# Pin to boost version such that OpenImageIO supports boost::filesystem without undefined
 	# references
+	# TODO(DF): may not be necessary if/when libstdc++ can be upgraded i.e. when Clang 17 is in
+	#   Conda)
 	boost/1.77.0
 
 	# String formatting. Must override dependency of openimageio or get ambiguous calls to
 	# `std::signbit` et al.
+	# TODO(DF): may not be necessary if/when libstdc++ can be upgraded i.e. when Clang 17 is in
+	#   Conda)
 	fmt/7.1.3
 
 	# Eigen linear algebra library
@@ -213,13 +223,13 @@ conan_cmake_configure(
 	openimageio:with_opencolorio=False
 	openimageio:with_opencv=False
 	openimageio:with_tbb=False
-	openimageio:with_dicom=False # Heavy dependency disabled by default
+	openimageio:with_dicom=False
 	openimageio:with_ffmpeg=False
 	openimageio:with_giflib=False
 	openimageio:with_libheif=False
-	openimageio:with_raw=False # libraw is available under CDDL-1.0 or LGPL-2.1 for this reason it is disabled by default
+	openimageio:with_raw=False
 	openimageio:with_openjpeg=False
-	openimageio:with_openvdb=False # FIXME broken on M1
+	openimageio:with_openvdb=False
 	openimageio:with_ptex=False
 	openimageio:with_libwebp=False
 )
@@ -246,6 +256,8 @@ target_compile_definitions(Eigen3::Eigen INTERFACE EIGEN_HAS_STD_RESULT_OF=0)
 find_package(OpenImageIO REQUIRED)
 #add_library(cppcoro::cppcoro ALIAS cppcoro)
 find_package(range-v3 REQUIRED)
+find_package(yaml-cpp REQUIRED)
+find_package(GTest REQUIRED)
 
 #------------------------------------------------------------
 # cppcoro C++20 coroutines library
@@ -276,22 +288,25 @@ if (CONVFELT_ENABLE_TESTS)
 	# not on default search path. Client-server based (tricky IDE/debugging). Client is a Ruby tool,
 	# so must install Ruby (and downgrade to <3.2). Auto-downloads a specific version of GTest for
 	# building against, but then doesn't install it.
-#	convfelt_cpm_install_package(
-#		CucumberCpp cucumber/cucumber-cpp main
-#		-DCUKE_ENABLE_BOOST_TEST=OFF
-#		-DCUKE_ENABLE_QT=OFF
-#		-DCUKE_TESTS_E2E=OFF
-#		-DCUKE_TESTS_UNIT=OFF)
+	# Note: `gem install cucumber-wire`, or otherwise, is required.
+	convfelt_cpm_install_package(
+		CucumberCpp cucumber/cucumber-cpp main
+		-DCUKE_ENABLE_BOOST_TEST=OFF
+		-DCUKE_ENABLE_QT=OFF
+		-DCUKE_TESTS_E2E=OFF
+		-DCUKE_TESTS_UNIT=OFF
+		-DCMAKE_PROJECT_Cucumber-Cpp_INCLUDE=${CMAKE_CURRENT_LIST_DIR}/CucumberCpp_include.cmake
+	)
 
 
 	# Lib looks good, but is a badly-behaved CMake package - additional vars required to disable
 	# tests, adds `-Werror` despite warnings from included third-party libraries, and doesn't
 	# include a CMake config file.
-	convfelt_cpm_install_package(
-		GUnit cpp-testing/GUnit v1.13.0
-		-DGUNIT_BUILD_BENCHMARKS=OFF -DGUNIT_BUILD_EXAMPLES=OFF -DGUNIT_BUILD_TESTS=OFF
-		# Use a shim file to set up installable target.
-		-DCMAKE_PROJECT_GUnit_INCLUDE=${CMAKE_CURRENT_LIST_DIR}/GUnit_include.cmake
-		-DCMAKE_PROJECT_gherkin-cpp_INCLUDE=${CMAKE_CURRENT_LIST_DIR}/gherkin-cpp_include.cmake
-	)
+#	convfelt_cpm_install_package(
+#		GUnit cpp-testing/GUnit v1.13.0
+#		-DGUNIT_BUILD_BENCHMARKS=OFF -DGUNIT_BUILD_EXAMPLES=OFF -DGUNIT_BUILD_TESTS=OFF
+#		# Use a shim file to set up installable target.
+#		-DCMAKE_PROJECT_GUnit_INCLUDE=${CMAKE_CURRENT_LIST_DIR}/GUnit_include.cmake
+#		-DCMAKE_PROJECT_gherkin-cpp_INCLUDE=${CMAKE_CURRENT_LIST_DIR}/gherkin-cpp_include.cmake
+#	)
 endif ()

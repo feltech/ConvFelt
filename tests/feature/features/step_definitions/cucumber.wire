@@ -1,0 +1,9 @@
+host: localhost
+port: 3905
+timeout:
+  connect: 120
+  invoke: 120
+  begin_scenario: 120
+  end_scenario: 120
+  step_matches: 120
+  snippet_text: 120
