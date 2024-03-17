@@ -1,6 +1,7 @@
 // Copyright 2023 David Feltell
 // SPDX-License-Identifier: MIT
 #pragma once
+#include <functional>
 #include <span>
 #include <type_traits>
 #include <vector>
@@ -13,33 +14,28 @@ namespace felt2::components
 {
 
 template <class T>
-concept IsStream = requires(T t) {
-	{
-		t << "char array"
-	};
-	{
-		t << std::size_t{}
-	};
-	{
-		t << int{}
-	};
-	{
-		t << float{}
-	};
-	{
-		t << double{}
-	};
+concept IsStream = requires(T t)
+{
+	{t << "char array"};
+	{t << std::size_t{}};
+	{t << int{}};
+	{t << float{}};
+	{t << double{}};
 };
 
 template <class T>
-concept HasDims = requires(T) {
+concept HasDims = requires(T)
+{
 	{
 		T::k_dims
 	} -> std::convertible_to<Dim>;
 };
 
 template <class T>
-concept HasLeafType = requires(T) { typename T::Leaf; };
+concept HasLeafType = requires(T)
+{
+	typename T::Leaf;
+};
 
 template <typename T>
 concept HasDimsAndLeafType = HasDims<T> && HasLeafType<T>;
@@ -48,7 +44,8 @@ template <class T>
 concept IsPointer = std::is_pointer_v<T>;
 
 template <class T>
-concept IsStorage = requires(T obj) {
+concept IsStorage = requires(T obj)
+{
 	{
 		obj.data()
 	} -> IsPointer;
@@ -61,27 +58,24 @@ template <typename T>
 using value_type_t = std::remove_pointer_t<std::decay_t<T>>;
 
 template <class T>
-concept IsResizeableStorage = IsStorage<T> && requires(T obj) {
-	{
-		obj.reserve(std::declval<PosIdx>())
-	};
-	{
-		obj.push_back(std::declval<value_type_t<decltype(obj.data())>>())
-	};
+concept IsResizeableStorage = IsStorage<T> && requires(T obj)
+{
+	{obj.reserve(std::declval<PosIdx>())};
+	{obj.push_back(std::declval<value_type_t<decltype(obj.data())>>())};
 };
 
 template <class T>
-concept IsResizeable = requires(T obj) {
-	{
-		obj.resize(std::declval<PosIdx>())
-	};
+concept IsResizeable = requires(T obj)
+{
+	{obj.resize(std::declval<PosIdx>())};
 };
 
 template <class T>
 concept HasStorageType = IsStorage<typename T::DataArray>;
 
 template <class T>
-concept HasStorage = requires(T obj) {
+concept HasStorage = requires(T obj)
+{
 	{
 		obj.storage()
 	} -> IsStorage;
@@ -92,21 +86,24 @@ using storage_leaf_t =
 	std::remove_pointer_t<std::decay_t<decltype(std::declval<Storage>().storage().data())>>;
 
 template <class T>
-concept HasResizeableStorage = requires(T obj) {
+concept HasResizeableStorage = requires(T obj)
+{
 	{
 		obj.storage()
 	} -> IsResizeableStorage;
 };
 
 template <class T>
-concept HasBytes = requires(T obj) {
+concept HasBytes = requires(T obj)
+{
 	{
 		obj.bytes()
 	} -> std::same_as<std::span<std::byte>>;
 };
 
 template <class T>
-concept HasStream = requires(T t) {
+concept HasStream = requires(T t)
+{
 	{
 		t.has_stream()
 	} -> std::convertible_to<bool>;
@@ -116,7 +113,16 @@ concept HasStream = requires(T t) {
 };
 
 template <class T>
-concept HasSize = requires(T t) {
+concept HasLog = requires(T t)
+{
+	{
+		t.log(std::declval<std::size_t>())
+	} -> std::convertible_to<bool>;
+};
+
+template <class T>
+concept HasSize = requires(T t)
+{
 	typename T::VecDi;
 	{
 		t.size()
@@ -133,41 +139,35 @@ concept HasSize = requires(T t) {
 };
 
 template <class T>
-concept HasSizeCheck = HasSize<T> && requires(T t) {
+concept HasSizeCheck = HasSize<T> && requires(T t)
+{
 	{
 		t.inside(std::declval<typename T::VecDi>())
 	} -> std::convertible_to<bool>;
 };
 
 template <class T>
-concept HasResize = requires(T t) {
+concept HasResize = requires(T t)
+{
 	typename T::VecDi;
-	{
-		t.resize(std::declval<typename T::VecDi>(), std::declval<typename T::VecDi>())
-	};
+	{t.resize(std::declval<typename T::VecDi>(), std::declval<typename T::VecDi>())};
 };
 
 template <class T, Dim D>
-concept HasAssertBounds = requires(T t) {
-	{
-		t.assert_pos_bounds(std::declval<PosIdx>(), std::declval<const char *>())
-	};
+concept HasAssertBounds = requires(T t)
+{
+	{t.assert_pos_bounds(std::declval<PosIdx>(), std::declval<const char *>())};
 
-	{
-		t.assert_pos_idx_bounds(std::declval<VecDi<D>>(), std::declval<const char *>())
-	};
+	{t.assert_pos_idx_bounds(std::declval<VecDi<D>>(), std::declval<const char *>())};
 
-	{
-		t.assert_pos_bounds(std::declval<VecDi<D>>(), std::declval<const char *>())
-	};
+	{t.assert_pos_bounds(std::declval<VecDi<D>>(), std::declval<const char *>())};
 
-	{
-		t.assert_pos_idx_bounds(std::declval<PosIdx>(), std::declval<const char *>())
-	};
+	{t.assert_pos_idx_bounds(std::declval<PosIdx>(), std::declval<const char *>())};
 };
 
 template <class T>
-concept HasReadAccess = requires(T t) {
+concept HasReadAccess = requires(T t)
+{
 	typename T::VecDi;
 	typename T::Leaf;
 	{
@@ -184,13 +184,15 @@ template <class T>
 concept IsSpanGrid = IsGrid<T> && HasResize<T> && HasResizeableStorage<T>;
 
 template <class T>
-concept IsGridOfSpanGrids = IsGrid<T> && requires {
+concept IsGridOfSpanGrids = IsGrid<T> && requires
+{
 	typename T::Leaf;
 	IsSpanGrid<typename T::Leaf>;
 };
 
 template <class T>
-concept HasChildrenSize = requires(T t) {
+concept HasChildrenSize = requires(T t)
+{
 	typename T::VecDi;
 	{
 		t.num_elems_per_child()
@@ -263,7 +265,7 @@ struct Size
 	/**
 	 * Test if a position is inside the grid bounds.
 	 *
-	 * @tparam Pos the type of position vector (i.e. float vs. int).
+	 * @tparam T the type of position vector (i.e. float vs. int).
 	 * @param pos_ position in grid to query.
 	 * @return true if position lies inside the grid, false otherwise.
 	 */
@@ -357,13 +359,13 @@ struct ResizableSize
 	}
 };
 
-template <HasDims Traits, HasStream Stream, HasSizeCheck Size, HasStorage Storage>
+template <HasDims Traits, HasLog Log, HasSizeCheck Size, HasStorage Storage>
 struct AssertBounds
 {
 	static constexpr Dim k_dims = Traits::k_dims;
 	using VecDi = VecDi<k_dims>;
 
-	Stream & m_stream_impl;
+	Log & m_log_impl;
 	Size const & m_size_impl;
 	Storage const & m_storage_impl;
 
@@ -381,43 +383,42 @@ struct AssertBounds
 	{
 		if (!m_size_impl.inside(pos_))
 		{
-			if (!m_stream_impl.has_stream())
-				assert(
-					m_size_impl.inside(pos_) &&
-					"assert_pos_bounds: debug unavailable, no stream set");
-
-			m_stream_impl.get_stream() << "AssertionError: " << title_ << " assert_pos_bounds";
-			format_pos(m_stream_impl.get_stream(), pos_);
-			m_stream_impl.get_stream() << " is not in ";
-			format_pos(m_stream_impl.get_stream(), m_size_impl.offset());
 			typename Size::VecDi max_extent = m_size_impl.offset() + m_size_impl.size();
-			m_stream_impl.get_stream() << " - ";
-			format_pos(m_stream_impl.get_stream(), max_extent);
-			m_stream_impl.get_stream() << "\n";
+			m_log_impl.log(
+				0,
+				"AssertionError: ",
+				title_,
+				" assert_pos_bounds",
+				pos_,
+				m_size_impl.offset(),
+				" - ",
+				max_extent,
+				"\n");
 		}
-		assert(m_size_impl.inside(pos_));
 	}
 
 	void assert_pos_idx_bounds(const PosIdx pos_idx_, const char * title_) const
 	{
 		if (pos_idx_ >= m_storage_impl.storage().size())
 		{
-			if (!m_stream_impl.has_stream())
-				assert(
-					pos_idx_ < m_storage_impl.storage().size() &&
-					"assert_pos_idx_bounds: debug unavailable, no stream set");
 			auto pos = m_size_impl.index(pos_idx_);
-			m_stream_impl.get_stream() << "AssertionError: " << title_ << " assert_pos_idx_bounds("
-									   << pos_idx_ << ") i.e. ";
-			format_pos(m_stream_impl.get_stream(), pos);
-			m_stream_impl.get_stream()
-				<< " is greater than extent " << m_storage_impl.storage().size() << "\n";
+
+			m_log_impl.log(
+				0,
+				"AssertionError: ",
+				title_,
+				" assert_pos_idx_bounds(",
+				pos_idx_,
+				") i.e. ",
+				pos,
+				" is greater than extent ",
+				m_storage_impl.storage().size(),
+				"\n");
 		}
-		assert(pos_idx_ < m_storage_impl.storage().size());
 	}
 };
 
-template <HasDimsAndLeafType Traits, HasSize Size, HasResizeableStorage Storage, HasStream Stream>
+template <HasDimsAndLeafType Traits, HasSize Size, HasResizeableStorage Storage, HasLog Log>
 struct Activate
 {
 	/// Dimension of the grid.
@@ -428,9 +429,9 @@ struct Activate
 	/// D-dimensional signed integer vector.
 	using VecDi = VecDi<k_dims>;
 
-	Size const & m_size_impl;
-	Storage & m_storage_impl;
-	Stream & m_stream_impl;
+	std::reference_wrapper<Size const> m_size_impl;
+	std::reference_wrapper<Storage> m_storage_impl;
+	std::reference_wrapper<Log> m_log_impl;
 	Leaf const m_background;
 
 	/**
@@ -440,7 +441,7 @@ struct Activate
 	 */
 	[[nodiscard]] bool is_active() const noexcept
 	{
-		return bool(m_storage_impl.storage().size());
+		return bool(m_storage_impl.get().storage().size());
 	}
 
 	/**
@@ -458,14 +459,14 @@ struct Activate
 	 */
 	void activate()
 	{
-		assert(m_storage_impl.storage().size() == 0);
+//		assert(m_storage_impl.get().storage().size() == 0);
 		// Note: resize() on libstdc++ 11 invokes operator=(), i.e. Copy/MoveAssignable, when we
 		// only want to enforce Copy/MoveInsertable, i.e. copy/move constructor. So here we
 		// essentially reimplement resize() (with the added precondition that data is empty).
-		auto const new_size = static_cast<PosIdx>(m_size_impl.size().prod());
-		m_storage_impl.storage().reserve(new_size);
+		auto const new_size = static_cast<PosIdx>(m_size_impl.get().size().prod());
+		m_storage_impl.get().storage().reserve(new_size);
 		for (PosIdx idx = 0; idx < new_size; ++idx)
-			m_storage_impl.storage().push_back(m_background);
+			m_storage_impl.get().storage().push_back(m_background);
 	}
 
 	/**
@@ -475,17 +476,12 @@ struct Activate
 	 */
 	void assert_is_active(const char * title_) const noexcept
 	{
-		if (m_stream_impl.has_stream() && !is_active())
+		if (!is_active())
 		{
-			const VecDi & pos_min = m_size_impl.offset();
-			const VecDi & pos_max = (m_size_impl.size() + pos_min - VecDi::Constant(1));
-			m_stream_impl.get_stream() << title_ << ": inactive grid ";
-			format_pos(m_stream_impl.get_stream(), pos_min);
-			m_stream_impl.get_stream() << "-";
-			format_pos(m_stream_impl.get_stream(), pos_max);
-			m_stream_impl.get_stream() << ")";
+			const VecDi & pos_min = m_size_impl.get().offset();
+			const VecDi & pos_max = (m_size_impl.get().size() + pos_min - VecDi::Constant(1));
+			m_log_impl.log(0, title_, ": inactive grid ", pos_min, "-", pos_max, "\n");
 		}
-		assert(is_active());
 	}
 };
 
@@ -615,7 +611,7 @@ struct AccessByValue
 	 * @param pos_ position in grid to query.
 	 * @param val_ value to copy into grid at pos_.
 	 */
-	void set(const VecDi & pos_, Leaf val_)
+	void set(const VecDi & pos_, Leaf val_) const noexcept
 	{
 		FELT2_DEBUG_CALL(m_assert_impl).assert_pos_bounds(pos_, "set: ");
 		const PosIdx idx = m_size_impl.index(pos_);
@@ -628,7 +624,7 @@ struct AccessByValue
 	 * @param pos_idx_ data index of position to query.
 	 * @param val_ value to copy into grid at pos_.
 	 */
-	void set(const PosIdx pos_idx_, Leaf val_)
+	void set(const PosIdx pos_idx_, Leaf val_) const
 	{
 #ifdef FELT2_DEBUG_ENABLED
 		m_assert_impl.assert_pos_bounds(pos_idx_, "set: ");

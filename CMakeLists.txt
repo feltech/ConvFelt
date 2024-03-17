@@ -34,7 +34,7 @@ if (NOT DEFINED CMAKE_INSTALL_MESSAGE)
 endif ()
 
 #------------------------------------------------------------
-# Third-party packages
+# Third-party settings/packages
 
 include(Thirdparty)
 
@@ -61,9 +61,12 @@ add_subdirectory(src)
 # Tests
 
 if (CONVFELT_ENABLE_TESTS)
+	message(STATUS "ConvFelt: Tests enabled")
 	# Enable CTest target support (`add_test()`).
 	enable_testing()
 	add_subdirectory(tests)
+else()
+	message(STATUS "ConvFelt: Tests disabled")
 endif ()
 
 

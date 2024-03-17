@@ -5,6 +5,7 @@ add_executable(
 	convfelt.test.unit
 	third_party.cpp
 )
+add_test(convfelt.test.unit convfelt.test.unit)
 
 target_link_libraries(
 	convfelt.test.unit
@@ -14,17 +15,17 @@ target_link_libraries(
 	convfelt
 )
 
-target_link_system_libraries(
+target_link_libraries(
 	convfelt.test.unit
 	PRIVATE
-	Catch2::Catch2WithMain trompeloeil::trompeloeil
+	Catch2::Catch2WithMain
+	trompeloeil::trompeloeil
 	OpenImageIO::OpenImageIO
 	cppcoro::cppcoro
 	range-v3::range-v3
 	MKL::onemkl
-	hipSYCL::hipSYCL-rt
+	std::mdspan
 )
-
 
 add_sycl_to_target(TARGET convfelt.test.unit)
 

@@ -1,116 +1,31 @@
+include_guard(GLOBAL)
 include(GNUInstallDirs)
 
-#------------------------------------------------------------
+#---------------------------------------------------------------------------------------------------
 # System dependencies
 
 # Compiler-specific support.
-if (NOT CMAKE_CXX_COMPILER_ID MATCHES Clang)
-	message(FATAL_ERROR "OpenSYCL dependency requires clang compiler for all features ("
-		"esp. coroutines) to be available")
-elseif (CMAKE_CXX_COMPILER_ID MATCHES Clang)
-	add_compile_options(
-		-Wno-error=unknown-cuda-version
-	)
-	add_link_options(
-		-Wno-error=unknown-cuda-version
-		-Qunused-arguments
-	)
-endif ()
-
-#------------------------------------------------------------
-# SyCL support
-
-if (NOT HIPSYCL_TARGETS)
-	set(HIPSYCL_TARGETS omp;cuda.integrated-multipass:sm_70 CACHE STRING
-		"hipSycl compilation flow targets")
-endif ()
-
-find_package(hipSYCL REQUIRED CONFIG)
-
-message(STATUS "ConvFelt: Using hipSyCL from ${hipSYCL_DIR}")
+#if (NOT CMAKE_CXX_COMPILER_ID MATCHES Clang)
+#	message(FATAL_ERROR "OpenSYCL dependency requires clang compiler for all features ("
+#		"esp. coroutines) to be available")
+#elseif (CMAKE_CXX_COMPILER_ID MATCHES Clang)
+#	add_compile_options(
+#		-Wno-error=unknown-cuda-version
+#	)
+#	add_link_options(
+#		-Wno-error=unknown-cuda-version
+#		-Qunused-arguments
+#	)
+#endif ()
 
 
-#------------------------------------------------------------
-# Install CPM package manager
-
-set(CPM_DOWNLOAD_VERSION 0.34.0)
-set(CPM_DOWNLOAD_LOCATION "${CMAKE_BINARY_DIR}/cmake/CPM_${CPM_DOWNLOAD_VERSION}.cmake")
-
-if (NOT (EXISTS ${CPM_DOWNLOAD_LOCATION}))
-	message(STATUS "Downloading CPM.cmake to ${CPM_DOWNLOAD_LOCATION}")
-	file(DOWNLOAD
-		https://github.com/TheLartians/CPM.cmake/releases/download/v${CPM_DOWNLOAD_VERSION}/CPM.cmake
-		${CPM_DOWNLOAD_LOCATION}
-	)
-endif ()
-
-include(${CPM_DOWNLOAD_LOCATION})
-set(CONVFELT_DEPENDENCIES_INSTALL_PREFIX "${PROJECT_BINARY_DIR}/dependencies" CACHE PATH
-	"Install tree for build dependencies")
-
-list(APPEND CMAKE_PREFIX_PATH ${CONVFELT_DEPENDENCIES_INSTALL_PREFIX})
-
-# Allow any build of libraries to be used for other configurations.
-set(CMAKE_MAP_IMPORTED_CONFIG_RELWITHDEBINFO Release;RelWithDebInfo;Debug;)
-
-
-#------------------------------------------------------------
-# Install Conan package manager CMake helpers
-
-# conan.cmake uses build tree, and can't be configured otherwise, annoyingly.
-list(APPEND CMAKE_MODULE_PATH ${PROJECT_BINARY_DIR})
-list(APPEND CMAKE_PREFIX_PATH ${PROJECT_BINARY_DIR})
-
-if (NOT EXISTS "${CMAKE_BINARY_DIR}/conan.cmake")
-	message(STATUS "Downloading conan.cmake from https://github.com/conan-io/cmake-conan")
-	file(DOWNLOAD "https://raw.githubusercontent.com/conan-io/cmake-conan/0.18.1/conan.cmake"
-		"${CMAKE_BINARY_DIR}/conan.cmake"
-		TLS_VERIFY ON)
-endif ()
-
-include(${CMAKE_BINARY_DIR}/conan.cmake)
-
-#------------------------------------------------------------
-# SYCL-BLAS
-# Broken for hipSYCL: https://github.com/codeplaysoftware/sycl-blas/issues/303
-
-#CPMAddPackage(
-#	NAME SyclBLAS
-#	GIT_TAG master
-#	GIT_REPOSITORY https://github.com/codeplaysoftware/sycl-blas.git
-#	OPTIONS
-#	"BLAS_BUILD_SAMPLES OFF"
-#	"BLAS_ENABLE_TESTING OFF"
-#	"BLAS_ENABLE_BENCHMARK OFF"
-#	"SYCL_COMPILER hipsycl"
-#	"BUILD_SHARED_LIBS ON"
-#	"BLAS_ENABLE_CONST_INPUT ON"
-#	"ENABLE_EXPRESSION_TESTS OFF"
-#	"BLAS_VERIFY_BENCHMARK OFF"
-#	"BLAS_ENABLE_EXTENSIONS ON"
-#)
-#find_package(SyclBLAS REQUIRED)
-
-# Compilation fails because of a missing function signature. Disabling BLAS_ENABLE_CONST_INPUT
-# should skip that bit of code, but it doesn't because of a bug - #ifdef is used rather than
-# checking the value.
-#get_directory_property(defs ${SyclBLAS_SOURCE_DIR}/src/policy COMPILE_DEFINITIONS)
-#list(FILTER defs EXCLUDE REGEX BLAS_ENABLE_CONST_INPUT)
-#set_property(DIRECTORY ${SyclBLAS_SOURCE_DIR}/src/policy PROPERTY COMPILE_DEFINITIONS ${defs})
-
-
-#------------------------------------------------------------
-# MKL
-# APT package doesn't work with libc++, must build.
-find_package(oneMKL CONFIG REQUIRED)
-message(STATUS "${MKL_IMPORTED_TARGETS}") #Provides available list of targets based on input
-target_compile_definitions(MKL::onemkl INTERFACE ENABLE_CUBLAS_BACKEND)
-
-#------------------------------------------------------------
+#---------------------------------------------------------------------------------------------------
 # Add project_options CMake library
 
-CPMAddPackage("gh:cpp-best-practices/project_options@0.22.4")
-include(${project_options_SOURCE_DIR}/src/DynamicProjectOptions.cmake)
+set(ProjectOptions_DIR ${CMAKE_CURRENT_LIST_DIR}/vendor/project_options)
+set(ProjectOptions_SRC_DIR ${ProjectOptions_DIR}/src CACHE FILEPATH "")
+mark_as_advanced(ProjectOptions_SRC_DIR)
+add_subdirectory(${ProjectOptions_DIR})
 # Too many false positives, especially with templated code.
 set(ENABLE_CPPCHECK_DEFAULT OFF)
 # Interferes with OpenCL, so disable by default even for "developer mode".
@@ -128,185 +43,181 @@ set(ENABLE_SANITIZER_ADDRESS_DEFAULT OFF)
 # Disable ccache as it confuses the hipSyCl compiler introspection (see syclcc-launcher)
 set(ENABLE_CACHE_DEFAULT OFF)
 # Disable for now, since -fcoroutines is not supported by Clang, but libstdc++ asserts on it.
-set(ENABLE_CLANG_TIDY_DEFAULT OFF)
+#set(ENABLE_CLANG_TIDY_DEFAULT OFF)
 # Disable for now, since false positive compile error, i.e.
 # https://gcc.gnu.org/bugzilla/show_bug.cgi?id=95137#c42
-set(ENABLE_SANITIZER_UNDEFINED_BEHAVIOR_DEFAULT OFF)
-
-
+#set(ENABLE_SANITIZER_UNDEFINED_BEHAVIOR_DEFAULT OFF)
 # Generate project_options and project_warnings INTERFACE targets.
+include(${ProjectOptions_SRC_DIR}/DynamicProjectOptions.cmake)
 dynamic_project_options()
 
-function(convfelt_cpm_install_package package_name gh_repo git_tag)
-	CPMAddPackage(
-		NAME ${package_name}
-		SYSTEM YES
-		EXCLUDE_FROM_ALL YES
-		DOWNLOAD_ONLY YES
-		GIT_TAG ${git_tag}
-		GIT_REPOSITORY https://github.com/${gh_repo}.git
-	)
-	find_package(${package_name} CONFIG QUIET)
-	if (NOT DEFINED ${package_name}_CONFIG)
-		execute_process(
-			COMMAND ${CMAKE_COMMAND}
-			-S ${${package_name}_SOURCE_DIR} -B ${${package_name}_BINARY_DIR}
-			--compile-no-warning-as-error
-			-DCMAKE_BUILD_TYPE=RelWithDebInfo
-			# Frustratingly, will probably just need to add more of these, unless insisting on a
-			# well-behaved library.
-			-DCMAKE_CXX_FLAGS=-Wno-error=implicit-int-float-conversion
-			${ARGN}
-			COMMAND_ERROR_IS_FATAL ANY
-		)
-		execute_process(
-			COMMAND ${CMAKE_COMMAND}
-			--build ${${package_name}_BINARY_DIR} --config RelWithDebInfo --parallel
-			COMMAND_ERROR_IS_FATAL ANY
-		)
-		execute_process(
-			COMMAND ${CMAKE_COMMAND}
-			--install ${${package_name}_BINARY_DIR} --prefix ${CONVFELT_DEPENDENCIES_INSTALL_PREFIX}
-			COMMAND_ERROR_IS_FATAL ANY
-		)
-	endif ()
-	find_package(${package_name} CONFIG REQUIRED)
-endfunction()
+#---------------------------------------------------------------------------------------------------
+# Configure CMake defaults for friendlier package support.
 
 
-#------------------------------------------------------------
-# Load dependencies via Conan package manager
+# Allow dependencies with e.g. only Release CMake config files to work with Debug project builds.
+#set(CMAKE_MAP_IMPORTED_CONFIG_RELEASE Release;RelWithDebInfo;Debug)
+#set(CMAKE_MAP_IMPORTED_CONFIG_RELWITHDEBINFO RelWithDebInfo;Release;Debug)
+#set(CMAKE_MAP_IMPORTED_CONFIG_DEBUG Debug;RelWithDebInfo;Release)
 
-conan_cmake_configure(
-	REQUIRES
-
-	# Required for CucumberCpp (it bundles it but doesn't install it)
-	gtest/1.14.0
-
-	# For parametrising network structure.
-	yaml-cpp/0.7.0
-
-	# Pin to boost version such that OpenImageIO supports boost::filesystem without undefined
-	# references
-	# TODO(DF): may not be necessary if/when libstdc++ can be upgraded i.e. when Clang 17 is in
-	#   Conda)
-	boost/1.77.0
-
-	# String formatting. Must override dependency of openimageio or get ambiguous calls to
-	# `std::signbit` et al.
-	# TODO(DF): may not be necessary if/when libstdc++ can be upgraded i.e. when Clang 17 is in
-	#   Conda)
-	fmt/7.1.3
-
-	# Eigen linear algebra library
-	eigen/3.4.0
-
-	# OpenImageIO image loading/processing library
-	openimageio/2.4.7.1
-	# Override to >=v3 so that Imath is used, rather than a fallback (OIIO_USING_IMATH), which works
-	# around "error: definition of type 'half' conflicts with typedef of the same name" when CUDA
-	# (via OpenSYCL) is also included.
-	openexr/3.1.5
-
-	# range-v3 (whilst waiting for std::range) library
-	range-v3/0.12.0
-
-	GENERATORS cmake_find_package
-
-	OPTIONS
-	openimageio:shared=True
-	openimageio:fPIC=True
-	openimageio:with_libjpeg=libjpeg
-	openimageio:with_libpng=True
-	openimageio:with_freetype=False
-	openimageio:with_hdf5=False
-	openimageio:with_opencolorio=False
-	openimageio:with_opencv=False
-	openimageio:with_tbb=False
-	openimageio:with_dicom=False
-	openimageio:with_ffmpeg=False
-	openimageio:with_giflib=False
-	openimageio:with_libheif=False
-	openimageio:with_raw=False
-	openimageio:with_openjpeg=False
-	openimageio:with_openvdb=False
-	openimageio:with_ptex=False
-	openimageio:with_libwebp=False
-)
-
-if (NOT DEFINED CONVFELT_CONAN_PROFILE)
-	set(CONVFELT_CONAN_PROFILE default)
+if (NOT DEFINED CMAKE_FIND_PACKAGE_PREFER_CONFIG)
+	set(CMAKE_FIND_PACKAGE_PREFER_CONFIG ON)
 endif ()
-if (NOT DEFINED CONVFELT_CONAN_REMOTE)
-	set(CONVFELT_CONAN_REMOTE conancenter)
-endif ()
+message(STATUS "CMAKE_FIND_PACKAGE_PREFER_CONFIG=${CMAKE_FIND_PACKAGE_PREFER_CONFIG}")
 
-conan_cmake_install(
-	PATH_OR_REFERENCE ${CMAKE_CURRENT_BINARY_DIR}
-	BUILD missing
-	REMOTE ${CONVFELT_CONAN_REMOTE}
-	PROFILE ${CONVFELT_CONAN_PROFILE}
-	# Disable error for warning triggered by boost mpi build.
-	ENV CPPFLAGS=-Wno-error=enum-constexpr-conversion
-)
+list(APPEND CMAKE_PREFIX_PATH ${convfelt_DEPENDENCY_INSTALL_CACHE_DIR})
 
+#---------------------------------------------------------------------------------------------------
+# External packages.
+
+# SyCL support
+find_package(AdaptiveCpp REQUIRED)
+message(STATUS "ConvFelt: Using AdaptiveCpp from ${AdaptiveCpp_DIR}")
+
+# MKL
+if (NOT DEFINED HIPSYCL_TARGETS)
+	# TODO(DF): remove once oneMKL migrates away from deprecated hipSYCL target.
+	set(HIPSYCL_TARGETS "omp,cuda" CACHE STRING "Deprecated hipSYCL targets" FORCE)
+	set(HIPSYCL_TARGETS "omp,cuda")
+endif()
+find_package(oneMKL CONFIG REQUIRED)
+message(STATUS "ConvFelt: Using oneMKL from ${oneMKL_DIR} with targets: ${MKL_IMPORTED_TARGETS}")
+target_compile_definitions(MKL::onemkl INTERFACE ENABLE_CUBLAS_BACKEND)
+
+# SYCL-BLAS
+# Broken for hipSYCL: https://github.com/codeplaysoftware/sycl-blas/issues/303
+
+# Multi-dimensional array span.
+find_package(mdspan REQUIRED)
+
+# BLAS
 find_package(Eigen3 REQUIRED)
 # Work around Eigen<=3.4.0 C++20 incompatibility
 target_compile_definitions(Eigen3::Eigen INTERFACE EIGEN_HAS_STD_RESULT_OF=0)
+
+# Image reading/writing.
 find_package(OpenImageIO REQUIRED)
-#add_library(cppcoro::cppcoro ALIAS cppcoro)
+
+# Range helpers..
 find_package(range-v3 REQUIRED)
-find_package(yaml-cpp REQUIRED)
-find_package(GTest REQUIRED)
 
-#------------------------------------------------------------
-# cppcoro C++20 coroutines library
-# Use CPM rather than Conan, since the (current) Conan recipe forces `-fcoroutines-ts`, which is
-# removed in clang-17.
-convfelt_cpm_install_package(cppcoro andreasbuhr/cppcoro main)
+# Checking if boost::format works in kernels...
+#find_package(Boost REQUIRED)
 
-#------------------------------------------------------------
-# Testing libraries
+# Check if Embedded Template Library works in kernels
+find_package(etl)
+
+# TODO: cppcoro FindCoroutines bug - Coroutines_FOUND cache variable not read properly. Seems to
+# be shadowed by a non-cache variable. My theory is it's the built-in *_FOUND variable
+# initialized by CMake.
+# Conan version is old and errors with:  TODO(DF): Is this still true?
+# > andreasbuhr-cppcoro/cci.20210113: Invalid ID: andreasbuhr-cppcoro does not support clang
+# > with libstdc++. Use libc++ instead.
+# Must allow set(CACHE) to overwrite normal variables For cppcorro's FindCoroutines
+# module. Wierd bug that won't reproduce on a minimal example.
+cmake_policy(SET CMP0126 OLD)
+find_package(cppcoro REQUIRED)
+#if (NOT TARGET cppcoro::cppcoro)
+#	convfelt_cpm_install_package(
+#		NAME cppcoro
+#		GITHUB_REPOSITORY karzhenkov/cppcoro
+#		GIT_TAG 2f54023f5148ac13bb825c61fc568cb26a61978b
+#	)
+#endif ()
 
 if (CONVFELT_ENABLE_TESTS)
+	# Unit tests
+	find_package(Catch2 REQUIRED)
+	# Mocks
+	find_package(trompeloeil REQUIRED)
 
-	#------------------------------------------------------------
-	# Catch2 testing library
+	#	if (NOT TARGET Catch2::Catch2WithMain)
+	#		convfelt_cpm_install_package(
+	#			NAME Catch2
+	#			GITHUB_REPOSITORY catchorg/Catch2
+	#			GIT_TAG v3.4.0
+	#		)
+	#	endif ()
+	#
+	#	# Mocking
+	#	if (NOT TARGET trompeloeil::trompeloeil)
+	#		convfelt_cpm_install_package(
+	#			NAME trompeloeil
+	#			GITHUB_REPOSITORY rollbear/trompeloeil
+	#			GIT_TAG v42
+	#		)
+	#	endif ()
 
-	convfelt_cpm_install_package(Catch2 catchorg/Catch2 v3.4.0)
-
-	#------------------------------------------------------------
-	# Trompeloeil mocking libraryk
-
-	convfelt_cpm_install_package(trompeloeil rollbear/trompeloeil v42)
-
-
-	#------------------------------------------------------------
-	# cucumber-cpp BDD testing libary
-
-	# Lots of moving parts to get this set up. Not maintained. CMake config file install location
-	# not on default search path. Client-server based (tricky IDE/debugging). Client is a Ruby tool,
-	# so must install Ruby (and downgrade to <3.2). Auto-downloads a specific version of GTest for
-	# building against, but then doesn't install it.
-	# Note: `gem install cucumber-wire`, or otherwise, is required.
-	convfelt_cpm_install_package(
-		CucumberCpp cucumber/cucumber-cpp main
-		-DCUKE_ENABLE_BOOST_TEST=OFF
-		-DCUKE_ENABLE_QT=OFF
-		-DCUKE_TESTS_E2E=OFF
-		-DCUKE_TESTS_UNIT=OFF
-		-DCMAKE_PROJECT_Cucumber-Cpp_INCLUDE=${CMAKE_CURRENT_LIST_DIR}/CucumberCpp_include.cmake
-	)
-
-
-	# Lib looks good, but is a badly-behaved CMake package - additional vars required to disable
-	# tests, adds `-Werror` despite warnings from included third-party libraries, and doesn't
-	# include a CMake config file.
-#	convfelt_cpm_install_package(
-#		GUnit cpp-testing/GUnit v1.13.0
-#		-DGUNIT_BUILD_BENCHMARKS=OFF -DGUNIT_BUILD_EXAMPLES=OFF -DGUNIT_BUILD_TESTS=OFF
-#		# Use a shim file to set up installable target.
-#		-DCMAKE_PROJECT_GUnit_INCLUDE=${CMAKE_CURRENT_LIST_DIR}/GUnit_include.cmake
-#		-DCMAKE_PROJECT_gherkin-cpp_INCLUDE=${CMAKE_CURRENT_LIST_DIR}/gherkin-cpp_include.cmake
-#	)
+	#	# BDD tests
+	#	find_package(CucumberCpp QUIET)
+	#	if (NOT TARGET CucumberCpp::cucumber-cpp-nomain)
+	#		find_package(asio REQUIRED)
+	#		find_package(nlohmann_json REQUIRED)
+	#		find_package(yaml-cpp REQUIRED)
+	#		find_package(fmt REQUIRED)
+	#		find_package(Boost REQUIRED)
+	#
+	#		# File to patch CucumberCpp's CMake.
+	#		file(
+	#			WRITE ${PROJECT_BINARY_DIR}/_deps/cucumbercpp.injected.cmake
+	#			"
+	#		function (link_deps)
+	#			find_package(asio REQUIRED)
+	#			find_package(nlohmann_json REQUIRED)
+	#			find_package(tclap REQUIRED)
+	#			target_link_libraries(cucumber-cpp-internal PRIVATE nlohmann_json::nlohmann_json asio::asio)
+	#			target_link_libraries(cucumber-cpp PRIVATE asio::asio nlohmann_json::nlohmann_json tclap::tclap)
+	#			target_link_libraries(cucumber-cpp-nomain PRIVATE asio::asio nlohmann_json::nlohmann_json)
+	#		endfunction()
+	#		# Defer linking targets til they're all created.
+	#		cmake_language(DEFER CALL link_deps())
+	#		"
+	#		)
+	#
+	#		set(
+	#			_cucumber_cpp_cmake_options
+	#			# Can't build as a separate shared lib because:
+	#			# > undefined reference to `typeinfo for cucumber::internal::CukeEngine'
+	#			-DBUILD_SHARED_LIBS=FALSE
+	#			-DCUKE_ENABLE_GTEST=OFF
+	#			-DCUKE_ENABLE_BOOST_TEST=OFF
+	#			-DCUKE_ENABLE_QT=OFF
+	#			-DCUKE_TESTS_UNIT=OFF
+	#			-DCMAKE_PROJECT_Cucumber-Cpp_INCLUDE=${PROJECT_BINARY_DIR}/_deps/cucumbercpp.injected.cmake
+	#		)
+	#
+	#		# Pass along any external override to Boost static vs. shared.
+	#		if (DEFINED Boost_USE_STATIC_LIBS)
+	#			set(_cucumber_cpp_cmake_options
+	#				${_cucumber_cpp_cmake_options} -DCUKE_USE_STATIC_BOOST=${Boost_USE_STATIC_LIBS})
+	#		endif ()
+	#
+	#		convfelt_cpm_install_package(
+	#			NAME CucumberCpp
+	#			GITHUB_REPOSITORY cucumber/cucumber-cpp
+	#			GIT_TAG v0.7.0
+	#			FIND_PACKAGE_OPTIONS
+	#			PATH_SUFFIXES lib/cmake
+	#			CMAKE_OPTIONS
+	#			${_cucumber_cpp_cmake_options}
+	#		)
+	#	endif ()
+	#
+	#
+	#	find_package(cucumber-cpp-runner QUIET)
+	#	if (NOT TARGET cucumber-cpp-runner::cucumber-cpp-runner)
+	#		find_package(yaml-cpp REQUIRED)
+	#		find_package(asio REQUIRED)
+	#		find_package(Boost REQUIRED)
+	#
+	#		convfelt_cpm_install_package(
+	#			NAME cucumber-cpp-runner
+	#			GITHUB_REPOSITORY feltech/cucumber-cpp-runner
+	#			GIT_TAG d09e66cd
+	#			CMAKE_OPTIONS
+	#			# Can't discover without help since CucumberCpp installs its CMake config files to
+	#			# non-standard location.
+	#			-DCucumberCpp_DIR=${CucumberCpp_DIR}
+	#		)
+	#	endif ()
 endif ()

@@ -36,6 +36,13 @@ namespace convfelt
 {
 class USMMatrix
 {
+	struct Traits
+	{
+		using Leaf = felt2::Scalar;
+	};
+	using StorageImpl = felt2::components::USMRawArray<Traits>;
+	using MatrixImpl = felt2::components::MatrixMap<StorageImpl>;
+	using BytesImpl = felt2::components::StorageBytes<StorageImpl>;
 public:
 	USMMatrix(
 		felt2::Dim const rows,
@@ -68,14 +75,11 @@ public:
 		return m_bytes_impl.bytes(std::forward<decltype(args)>(args)...);
 	}
 
+	operator MatrixImpl::Matrix() { // NOLINT(*-explicit-constructor)
+		return m_matrix_impl.matrix();
+	}
+
 private:
-	struct Traits
-	{
-		using Leaf = felt2::Scalar;
-	};
-	using StorageImpl = felt2::components::USMRawArray<Traits>;
-	using MatrixImpl = felt2::components::MatrixMap<StorageImpl>;
-	using BytesImpl = felt2::components::StorageBytes<StorageImpl>;
 
 	StorageImpl m_storage_impl;
 	BytesImpl m_bytes_impl;
@@ -98,22 +102,22 @@ public:
 	using Leaf = typename Traits::Leaf;
 
 	using SizeImpl = felt2::components::Size<Traits>;
-	using StreamImpl = felt2::components::Stream;
 	using StorageImpl = std::conditional_t<
 		is_device_shared,
 		felt2::components::USMResizeableArray<Traits>,
 		felt2::components::DataArray<Traits>>;
+	using LogImpl = felt2::components::Log;
 	using AssertBoundsImpl =
-		felt2::components::AssertBounds<Traits, StreamImpl, SizeImpl, StorageImpl>;
+		felt2::components::AssertBounds<Traits, LogImpl, SizeImpl, StorageImpl>;
 	using AccessImpl =
 		felt2::components::AccessByValue<Traits, SizeImpl, StorageImpl, AssertBoundsImpl>;
-	using ActivateImpl = felt2::components::Activate<Traits, SizeImpl, StorageImpl, StreamImpl>;
+	using ActivateImpl = felt2::components::Activate<Traits, SizeImpl, StorageImpl, LogImpl>;
 	using MatrixImpl = felt2::components::EigenMap<Traits, StorageImpl>;
 
 private:
 	SizeImpl const m_size_impl;
-	StreamImpl m_stream_impl{};
-	AssertBoundsImpl const m_assert_bounds_impl{m_stream_impl, m_size_impl, m_storage_impl};
+	LogImpl m_log_impl{};
+	AssertBoundsImpl const m_assert_bounds_impl{m_log_impl, m_size_impl, m_storage_impl};
 	AccessImpl m_access_impl{m_size_impl, m_storage_impl, m_assert_bounds_impl};
 	StorageImpl m_storage_impl;
 	ActivateImpl m_activate_impl;
@@ -121,15 +125,15 @@ private:
 
 public:
 	ByValue(
-		const VecDi & size_,
-		const VecDi & offset_,
-		Leaf background_,
+		const VecDi & size,
+		const VecDi & offset,
+		Leaf background,
 		sycl::context context,
 		sycl::device device)
 		requires(is_device_shared)
-		: m_size_impl{size_, offset_},
+		: m_size_impl{size, offset},
 		  m_storage_impl{{std::move(context), std::move(device)}},
-		  m_activate_impl{m_size_impl, m_storage_impl, m_stream_impl, background_}
+		  m_activate_impl{m_size_impl, m_storage_impl, m_log_impl, background}
 	{
 		m_activate_impl.activate();
 	}
@@ -138,7 +142,7 @@ public:
 		requires(!is_device_shared)
 		: m_size_impl{size_, offset_},
 		  m_storage_impl{},
-		  m_activate_impl{m_size_impl, m_storage_impl, m_stream_impl, background_}
+		  m_activate_impl{m_size_impl, m_storage_impl, m_log_impl, background_}
 	{
 		m_activate_impl.activate();
 	}
@@ -195,9 +199,21 @@ public:
 	{
 		return m_matrix_impl.matrix(std::forward<decltype(args)>(args)...);
 	}
-	decltype(auto) set_stream(auto &&... args) noexcept
+	decltype(auto) log(auto &&... args) const noexcept
 	{
-		return m_stream_impl.set_stream(std::forward<decltype(args)>(args)...);
+		return m_log_impl.log(std::forward<decltype(args)>(args)...);
+	}
+	decltype(auto) text(auto &&... args) const noexcept
+	{
+		return m_log_impl.text(std::forward<decltype(args)>(args)...);
+	}
+	decltype(auto) reset_log(auto &&... args) noexcept
+	{
+		return m_log_impl.reset(std::forward<decltype(args)>(args)...);
+	}
+	decltype(auto) has_logs(auto &&... args) const noexcept
+	{
+		return m_log_impl.has_logs(std::forward<decltype(args)>(args)...);
 	}
 };
 
@@ -221,21 +237,21 @@ public:
 	using Leaf = typename Traits::Leaf;
 
 	using SizeImpl = felt2::components::Size<Traits>;
-	using StreamImpl = felt2::components::Stream;
 	using StorageImpl = std::conditional_t<
 		is_device_shared,
 		felt2::components::USMResizeableArray<Traits>,
 		felt2::components::DataArray<Traits>>;
+	using LogImpl = felt2::components::Log;
 	using AssertBoundsImpl =
-		felt2::components::AssertBounds<Traits, StreamImpl, SizeImpl, StorageImpl>;
+		felt2::components::AssertBounds<Traits, LogImpl, SizeImpl, StorageImpl>;
 	using AccessImpl =
 		felt2::components::AccessByRef<Traits, SizeImpl, StorageImpl, AssertBoundsImpl>;
-	using ActivateImpl = felt2::components::Activate<Traits, SizeImpl, StorageImpl, StreamImpl>;
+	using ActivateImpl = felt2::components::Activate<Traits, SizeImpl, StorageImpl, LogImpl>;
 
 private:
 	SizeImpl const m_size_impl;
-	StreamImpl m_stream_impl{};
-	AssertBoundsImpl const m_assert_bounds_impl{m_stream_impl, m_size_impl, m_storage_impl};
+	LogImpl m_log_impl{};
+	AssertBoundsImpl const m_assert_bounds_impl{m_log_impl, m_size_impl, m_storage_impl};
 	AccessImpl m_access_impl{m_size_impl, m_storage_impl, m_assert_bounds_impl};
 	StorageImpl m_storage_impl;
 	ActivateImpl m_activate_impl;
@@ -250,7 +266,7 @@ public:
 		requires(is_device_shared)
 		: m_size_impl{size_, offset_},
 		  m_storage_impl{{std::move(context), std::move(device)}},
-		  m_activate_impl{m_size_impl, m_storage_impl, m_stream_impl, background_}
+		  m_activate_impl{m_size_impl, m_storage_impl, m_log_impl, background_}
 	{
 		m_activate_impl.activate();
 	}
@@ -259,7 +275,7 @@ public:
 		requires(!is_device_shared)
 		: m_size_impl{size_, offset_},
 		  m_storage_impl{},
-		  m_activate_impl{m_size_impl, m_storage_impl, m_stream_impl, background_}
+		  m_activate_impl{m_size_impl, m_storage_impl, m_log_impl, background_}
 	{
 		m_activate_impl.activate();
 	}
@@ -300,9 +316,21 @@ public:
 	{
 		return m_size_impl.size(std::forward<decltype(args)>(args)...);
 	}
-	decltype(auto) set_stream(auto &&... args) noexcept
+	decltype(auto) log(auto &&... args) const noexcept
 	{
-		return m_stream_impl.set_stream(std::forward<decltype(args)>(args)...);
+		return m_log_impl.log(std::forward<decltype(args)>(args)...);
+	}
+	decltype(auto) text(auto &&... args) const noexcept
+	{
+		return m_log_impl.text(std::forward<decltype(args)>(args)...);
+	}
+	decltype(auto) reset_log(auto &&... args) noexcept
+	{
+		return m_log_impl.reset(std::forward<decltype(args)>(args)...);
+	}
+	decltype(auto) has_logs(auto &&... args) const noexcept
+	{
+		return m_log_impl.has_logs(std::forward<decltype(args)>(args)...);
 	}
 };
 
@@ -322,10 +350,10 @@ public:
 	using Leaf = typename Traits::Leaf;
 
 	using SizeImpl = felt2::components::ResizableSize<Traits>;
-	using StreamImpl = felt2::components::Stream;
 	using StorageImpl = felt2::components::DataArraySpan<Traits>;
+	using LogImpl = felt2::components::Log;
 	using AssertBoundsImpl =
-		felt2::components::AssertBounds<Traits, StreamImpl, SizeImpl, StorageImpl>;
+		felt2::components::AssertBounds<Traits, LogImpl, SizeImpl, StorageImpl>;
 	using AccessImpl =
 		felt2::components::AccessByValue<Traits, SizeImpl, StorageImpl, AssertBoundsImpl>;
 	using MatrixImpl = felt2::components::EigenMap<Traits, StorageImpl>;
@@ -333,8 +361,8 @@ public:
 private:
 	SizeImpl m_size_impl;
 	StorageImpl m_storage_impl{};
-	StreamImpl m_stream_impl{};
-	AssertBoundsImpl const m_assert_bounds_impl{m_stream_impl, m_size_impl, m_storage_impl};
+	LogImpl m_log_impl{};
+	AssertBoundsImpl const m_assert_bounds_impl{m_log_impl, m_size_impl, m_storage_impl};
 	AccessImpl m_access_impl{m_size_impl, m_storage_impl, m_assert_bounds_impl};
 	MatrixImpl const m_matrix_impl{m_storage_impl};
 
@@ -344,8 +372,8 @@ public:
 	FilterTD(This const & other)
 		: m_size_impl{other.m_size_impl},
 		  m_storage_impl{other.m_storage_impl},
-		  m_stream_impl{other.m_stream_impl},
-		  m_assert_bounds_impl{m_stream_impl, m_size_impl, m_storage_impl},
+		  m_log_impl{other.m_log_impl},
+		  m_assert_bounds_impl{m_log_impl, m_size_impl, m_storage_impl},
 		  m_access_impl{m_size_impl, m_storage_impl, m_assert_bounds_impl},
 		  m_matrix_impl{m_storage_impl}
 	{
@@ -354,8 +382,8 @@ public:
 	FilterTD(This && other) noexcept
 		: m_size_impl{std::move(other.m_size_impl)},
 		  m_storage_impl{std::move(other.m_storage_impl)},
-		  m_stream_impl{std::move(other.m_stream_impl)},
-		  m_assert_bounds_impl{m_stream_impl, m_size_impl, m_storage_impl},
+		  m_log_impl{std::move(other.m_log_impl)},
+		  m_assert_bounds_impl{m_log_impl, m_size_impl, m_storage_impl},
 		  m_access_impl{m_size_impl, m_storage_impl, m_assert_bounds_impl},
 		  m_matrix_impl{m_storage_impl}
 	{
@@ -389,7 +417,7 @@ public:
 	{
 		return m_access_impl.get(std::forward<decltype(args)>(args)...);
 	}
-	decltype(auto) set(auto &&... args) noexcept
+	decltype(auto) set(auto &&... args) const noexcept
 	{
 		return m_access_impl.set(std::forward<decltype(args)>(args)...);
 	}
@@ -416,10 +444,6 @@ public:
 	decltype(auto) matrix(auto &&... args) const noexcept
 	{
 		return m_matrix_impl.matrix(std::forward<decltype(args)>(args)...);
-	}
-	decltype(auto) set_stream(auto &&... args) noexcept
-	{
-		return m_stream_impl.set_stream(std::forward<decltype(args)>(args)...);
 	}
 	decltype(auto) assert_pos_bounds(auto &&... args) const noexcept
 	{
@@ -452,23 +476,23 @@ public:
 
 	using SizeImpl = felt2::components::Size<Traits>;
 	using ChildrenSizeImpl = felt2::components::ChildrenSize<Traits, SizeImpl>;
-	using StreamImpl = felt2::components::Stream;
 	using StorageImpl = std::conditional_t<
 		is_device_shared,
 		felt2::components::USMResizeableArray<Traits>,
 		felt2::components::DataArray<Traits>>;
 	using BytesImpl = felt2::components::StorageBytes<StorageImpl>;
+	using LogImpl = felt2::components::Log;
 	using AssertBoundsImpl =
-		felt2::components::AssertBounds<Traits, StreamImpl, SizeImpl, StorageImpl>;
+		felt2::components::AssertBounds<Traits, LogImpl, SizeImpl, StorageImpl>;
 	using MatrixImpl = felt2::components::MatrixColPerChild<Traits, StorageImpl, ChildrenSizeImpl>;
 
 private:
 	StorageImpl m_storage_impl;
 	SizeImpl const m_size_impl;
 	ChildrenSizeImpl const m_children_size_impl;
-	StreamImpl m_stream_impl{};
+	LogImpl m_log_impl{};
 	BytesImpl m_bytes_impl{m_storage_impl};
-	AssertBoundsImpl const m_assert_bounds_impl{m_stream_impl, m_size_impl, m_storage_impl};
+	AssertBoundsImpl const m_assert_bounds_impl{m_log_impl, m_size_impl, m_storage_impl};
 	MatrixImpl m_matrix_impl{m_storage_impl, m_children_size_impl};
 
 	ChildrenGrid m_children;
@@ -562,23 +586,21 @@ public:
 	{
 		return m_matrix_impl.matrix(std::forward<decltype(args)>(args)...);
 	}
-	decltype(auto) has_stream(auto &&... args) const noexcept
+	decltype(auto) log(auto &&... args) const noexcept
 	{
-		return m_stream_impl.has_stream(std::forward<decltype(args)>(args)...);
+		return m_log_impl.log(std::forward<decltype(args)>(args)...);
 	}
-	decltype(auto) get_stream(auto &&... args) const noexcept
+	decltype(auto) text(auto &&... args) const noexcept
 	{
-		return m_stream_impl.get_stream(std::forward<decltype(args)>(args)...);
+		return m_log_impl.text(std::forward<decltype(args)>(args)...);
 	}
-	decltype(auto) get_stream(auto &&... args) noexcept
+	decltype(auto) reset_log(auto &&... args) noexcept
 	{
-		return m_stream_impl.get_stream(std::forward<decltype(args)>(args)...);
+		return m_log_impl.reset(std::forward<decltype(args)>(args)...);
 	}
-	decltype(auto) set_stream(sycl::stream * stream) noexcept
+	decltype(auto) has_logs(auto &&... args) const noexcept
 	{
-		m_children.set_stream(stream);
-		for (auto & child : convfelt::iter::val(m_children)) child.set_stream(stream);
-		return m_stream_impl.set_stream(stream);
+		return m_log_impl.has_logs(std::forward<decltype(args)>(args)...);
 	}
 
 private:
@@ -619,12 +641,10 @@ public:
 
 	using SizeImpl = felt2::components::Size<Traits>;
 	using ChildrenSizeImpl = felt2::components::ChildrenSize<Traits, SizeImpl>;
-	using StreamImpl = felt2::components::Stream;
 
 private:
 	SizeImpl const m_size_impl;
 	ChildrenSizeImpl const m_children_size_impl;
-	StreamImpl m_stream_impl{};
 	ChildrenGrid m_children;
 
 public:
@@ -672,21 +692,6 @@ public:
 	ChildrenGrid & children() noexcept
 	{
 		return m_children;
-	}
-
-	decltype(auto) get_stream(auto &&... args) const noexcept
-	{
-		return m_stream_impl.get_stream(std::forward<decltype(args)>(args)...);
-	}
-	decltype(auto) get_stream(auto &&... args) noexcept
-	{
-		return m_stream_impl.get_stream(std::forward<decltype(args)>(args)...);
-	}
-	decltype(auto) set_stream(sycl::stream * stream) noexcept
-	{
-		m_children.set_stream(stream);
-		for (auto & child : convfelt::iter::val(m_children)) child.set_stream(stream);
-		return m_stream_impl.set_stream(stream);
 	}
 
 private:

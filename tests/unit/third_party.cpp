@@ -3,14 +3,16 @@
 #include <ranges>
 #include <span>
 
+#include <experimental/mdarray>
 #include <sycl/sycl.hpp>
-//namespace sycl
+// namespace sycl
 //{
 //// Required for MKL.
-//template <typename... Args>
-//using span = std::span<Args...>;
-//}  // namespace sycl
+// template <typename... Args>
+// using span = std::span<Args...>;
+// }  // namespace sycl
 #include <oneapi/mkl.hpp>
+namespace stdex = std::experimental;
 
 // Eigen
 //   * OpenSYCL (hipSYCL) not supported because missing `isinf` and `isfinite` builtins. So must
@@ -20,7 +22,17 @@
 // Required for Eigen.
 #ifdef SYCL_DEVICE_ONLY
 #define was_SYCL_DEVICE_ONLY SYCL_DEVICE_ONLY
-#undef SYCL_DEVICE_ONLY
+// #undef SYCL_DEVICE_ONLY
+#else
+
+// Eigen 3.4.0 (fixed in master) has a workaround for SYCL where it wraps min/max functions in a
+// lambda on SYCL. This appears to fix cudaErrorIllegalAddress in min/max functions - something to
+// do with function pointers.
+// https://gitlab.com/libeigen/eigen/-/commit/e24a1f57e35f3f3894a5612bb8b4e34bf68ebb26
+// #define SYCL_DEVICE_ONLY
+// #include <Eigen/src/Core/GenericPacketMath.h>
+// #undef SYCL_DEVICE_ONLY
+
 #endif
 #include <Eigen/Eigen>
 #ifdef was_SYCL_DEVICE_ONLY
@@ -44,8 +56,10 @@
 #include <OpenImageIO/imagebufalgo.h>
 #include <OpenImageIO/imageio.h>
 
-#include <catch2/catch_test_macros.hpp>
 #include <catch2/catch_approx.hpp>
+#include <catch2/catch_test_macros.hpp>
+#include <catch2/matchers/catch_matchers.hpp>
+#include <catch2/matchers/catch_matchers_string.hpp>
 
 #include <cppcoro/static_thread_pool.hpp>
 #include <cppcoro/sync_wait.hpp>
@@ -178,17 +192,15 @@ SCENARIO("Using OpenImageIO with cppcoro and loading into Felt grid")
 }
 
 template <typename T>
-concept IsCallableWithGlobalPos = requires(T t) {
-	{
-		t(std::declval<felt2::Vec3i>())
-	};
+concept IsCallableWithGlobalPos = requires(T t)
+{
+	{t(std::declval<felt2::Vec3i>())};
 };
 
 template <typename T>
-concept IsCallableWithFilterPos = requires(T t) {
-	{
-		t(std::declval<felt2::Vec3i>(), std::declval<felt2::Vec3i>())
-	};
+concept IsCallableWithFilterPos = requires(T t)
+{
+	{t(std::declval<felt2::Vec3i>(), std::declval<felt2::Vec3i>())};
 };
 
 template <typename T>
@@ -347,9 +359,11 @@ struct FilterSizeHelper
 		auto filter_pos_first_window = filter_pos_first.template head<D - 1>();
 		auto filter_pos_last_window = filter_pos_last.template head<D - 1>();
 
+		// Note: causes cudaErrorIllegalAddress in Eigen <= 3.4 - fixed in master.
 		filter_pos_last_window.array() =
 			source_pos_window.array().min(source_size_window.array() - filter_size_window.array()) /
 			filter_stride_window.array();
+
 		// filter_size - filter_stride = source_pos - filter_pos_first * filter_stride
 		// <=> filter_pos_first = (source_pos - filter_size + filter_stride) / filter_stride
 		filter_pos_first_window.array() =
@@ -852,6 +866,34 @@ SCENARIO("Input/output ConvGrids")
 	}
 }
 
+void async_handler(sycl::exception_list error_list)
+{
+	if (error_list.size() > 0)
+	{
+		std::string errors;
+		for (std::size_t idx = 0; idx < error_list.size(); ++idx)
+		{
+			try
+			{
+				if (error_list[idx])
+				{
+					std::rethrow_exception(error_list[idx]);
+				}
+			}
+			catch (std::exception & e)
+			{
+				std::format_to(std::back_inserter(errors), "{}: {}\n", idx, e.what());
+			}
+			catch (...)
+			{
+				std::format_to(
+					std::back_inserter(errors), "{}: <unknown non-std::exception>\n", idx);
+			}
+		}
+		throw std::runtime_error{errors};
+	}
+}
+
 SCENARIO("Basic SyCL usage")
 {
 	GIVEN("Input vectors")
@@ -860,18 +902,18 @@ SCENARIO("Basic SyCL usage")
 		std::vector<float> b = {-1.f, 2.f, -3.f, 4.f, -5.f};
 		std::vector<float> c(a.size());
 		assert(a.size() == b.size());
+		sycl::queue q{sycl::gpu_selector_v, &async_handler};
 
 		WHEN("vectors are added using sycl")
 		{
+			using Allocator = sycl::usm_allocator<float, sycl::usm::alloc::shared>;
+			std::vector<float, Allocator> vals(Allocator{q});
 			{
-				sycl::queue q{sycl::gpu_selector_v};
 				sycl::range<1> work_items{a.size()};
 				sycl::buffer<float> buff_a(a.data(), a.size());
 				sycl::buffer<float> buff_b(b.data(), b.size());
 				sycl::buffer<float> buff_c(c.data(), c.size());
 
-				using Allocator = sycl::usm_allocator<float, sycl::usm::alloc::shared>;
-				std::vector<float, Allocator> vals(Allocator{q});
 				vals.push_back(1);
 				vals.push_back(2);
 
@@ -884,15 +926,84 @@ SCENARIO("Basic SyCL usage")
 
 						cgh.parallel_for<class vector_add>(
 							work_items,
-							[=](sycl::id<1> tid)
-							{ access_c[tid] = access_a[tid] + access_b[tid] + vals[0] + vals[1]; });
+							[=, data = vals.data()](sycl::id<1> tid)
+							{ access_c[tid] = access_a[tid] + access_b[tid] + data[0] + data[1]; });
 					});
+				q.wait_and_throw();
 			}
 			THEN("result is as expected")
 			{
 				std::vector<float> expected = {3.f, 7.f, 3.f, 11.f, 3.f};
 
 				CHECK(c == expected);
+			}
+		}
+
+		WHEN("USM vector is doubled by kernel")
+		{
+			using Allocator = sycl::usm_allocator<float, sycl::usm::alloc::shared>;
+			auto vals = felt2::make_unique_sycl<std::vector<float, Allocator>>(
+				q.get_device(), q.get_context(), Allocator{q});
+			vals->push_back(1);
+			vals->push_back(2);
+			sycl::range<1> work_items{vals->size()};
+			q.submit(
+				[&](sycl::handler & cgh)
+				{
+					cgh.parallel_for<class vector_double>(
+						work_items,
+						[pvals = vals.get()](sycl::id<1> tid)
+						{
+							auto & vals = *pvals;
+							auto const val = vals[tid];
+							vals[tid] = val * static_cast<float>(vals.size());
+						});
+				});
+			q.wait_and_throw();
+
+			THEN("values have been doubled")
+			{
+				std::vector<float, Allocator> expected{Allocator{q}};
+				expected.push_back(2);
+				expected.push_back(4);
+
+				CHECK(*vals == expected);
+			}
+		}
+		WHEN("CUDA error")
+		{
+			using Allocator = sycl::usm_allocator<char, sycl::usm::alloc::shared>;
+			std::vector<char, Allocator> vals(Allocator{q});
+			static constexpr std::size_t buff_len = 20;
+			vals.resize(buff_len);
+
+			sycl::range<1> work_items{vals.size()};
+			q.submit(
+				[&](sycl::handler & cgh)
+				{
+					cgh.parallel_for<class vector_double>(
+						work_items,
+						[buff = vals.data()](sycl::id<1> tid) {
+							std::format_to_n(
+								buff, buff_len, "Hello from thread {}", static_cast<int>(tid));
+						});
+				});
+
+			THEN("Error is reported")
+			{
+				try
+				{
+					q.wait_and_throw();
+					FAIL("Should have thrown");
+				}
+				catch (const std::exception & exc)
+				{
+					std::string const error_message{exc.what()};
+					CHECK_THAT(
+						error_message,
+						Catch::Matchers::ContainsSubstring(
+							"Unresolved extern function 'memchr' (error code = CU:218)"));
+				}
 			}
 		}
 	}
@@ -929,6 +1040,99 @@ SCENARIO("Basic oneMKL usage")
 	}
 }
 
+template <class String, class... Args>
+void append(String & str, Args... args)
+{
+	(
+		[&]
+		{
+			if constexpr (requires { std::string_view{args}; })
+			{
+				str += args;
+			}
+			else
+			{
+				etl::to_string(args, str, true);
+			}
+		}(),
+		...);
+}
+
+SCENARIO("Assertion and logging in SYCL")
+{
+	GIVEN("queue and work range")
+	{
+		sycl::queue q{sycl::gpu_selector_v};
+
+		static constexpr std::size_t num_work_items = 5;
+		static constexpr std::size_t max_msg_size = 20;
+
+		sycl::range<1> work_items{num_work_items};
+
+		using Allocator = sycl::usm_allocator<char, sycl::usm::alloc::shared>;
+		using Extents = stdex::extents<char, std::dynamic_extent, max_msg_size>;
+		std::vector<char, Allocator> text_data(num_work_items * max_msg_size, '\0', Allocator{q});
+		stdex::mdspan<char, Extents, stdex::layout_right> text_nd{
+			text_data.data(), Extents{num_work_items}};
+
+		felt2::components::Log logger;
+
+		WHEN("a kernel with logging is executed")
+		{
+			q.submit(
+				[&](sycl::handler & cgh)
+				{
+					cgh.parallel_for<class vector_add>(
+						work_items,
+						[text_nd](sycl::id<1> tid)
+						{
+							//							etl::string_ext
+							etl::string_ext text{&text_nd(static_cast<int>(tid), 0), max_msg_size};
+							//							tex += "Hello from thread ";
+							// etl::to_string(static_cast<int>(tid), text, true);
+							append(text, "Hello from thread ", static_cast<int>(tid));
+						});
+				});
+			q.wait_and_throw();
+			THEN("log is output")
+			{
+				for (int tid = 0; tid < text_nd.extents().extent(0); ++tid)
+				{
+					std::string_view const msg{&text_nd(tid, 0)};
+
+					CHECK(msg == fmt::format("Hello from thread {}", tid));
+				}
+			}
+		}
+
+		WHEN("a kernel with a logger is executed")
+		{
+			auto storage = logger.reset(q, work_items.get(0), 1024);
+
+			q.submit(
+				[&](sycl::handler & cgh)
+				{
+					cgh.parallel_for<class vector_add>(
+						work_items,
+						[logger](sycl::id<1> tid) {
+							logger.log(
+								static_cast<std::size_t>(tid),
+								"Hello from thread ",
+								static_cast<int>(tid));
+						});
+				});
+			q.wait_and_throw();
+			THEN("log is output")
+			{
+				for (std::size_t tid = 0; tid < work_items.get(0); ++tid)
+				{
+					CHECK(logger.text(tid) == fmt::format("Hello from thread {}", tid));
+				}
+			}
+		}
+	}
+}
+
 SCENARIO("SyCL with ConvGrid")
 {
 	GIVEN("Shared grid")
@@ -950,6 +1154,10 @@ SCENARIO("SyCL with ConvGrid")
 			sycl::range<1> work_items{pgrid->children().storage().size()};
 
 			sycl::queue q{ctx, dev};
+
+			auto log_storage =
+				pgrid->reset_log(q, static_cast<std::size_t>(work_items.get(0)), 1024UL);
+
 			q.submit([&](sycl::handler & cgh)
 					 { cgh.prefetch(pgrid->storage().data(), pgrid->storage().size()); });
 			q.submit(
@@ -960,9 +1168,6 @@ SCENARIO("SyCL with ConvGrid")
 			q.submit(
 				[&](sycl::handler & cgh)
 				{
-					sycl::stream os{2048, 256, cgh};
-					pgrid->set_stream(&os);
-
 					cgh.parallel_for<class grid_mult>(
 						work_items,
 						[pgrid = pgrid.get()](sycl::id<1> tid)
@@ -972,15 +1177,11 @@ SCENARIO("SyCL with ConvGrid")
 						});
 				});
 
-			pgrid->set_stream(nullptr);
-			// Host-side now, so should have stream no matter what.
-			CHECK(pgrid->has_stream());
-
-			pgrid->get_stream() << "Testing host-side streaming works\n";
-
 			q.wait_and_throw();
 			THEN("result is as expected")
 			{
+				CHECK(!pgrid->has_logs());
+
 				for (auto const val : convfelt::iter::val(*pgrid)) CHECK(val == 6);
 			}
 		}
@@ -1051,13 +1252,14 @@ SCENARIO("Applying filter to ConvGrid")
 				sycl::range<1> work_items{image_grid_device->storage().size()};
 				sycl::queue q{ctx, dev};
 
+				auto image_grid_log_storage =
+					image_grid_device->reset_log(q, work_items.get(0), 1024UL);
+				auto input_grid_log_storage =
+					filter_input_grid_device->reset_log(q, work_items.get(0), 1024UL);
+
 				q.submit(
 					[&](sycl::handler & cgh)
 					{
-						sycl::stream os{2048, 512, cgh};
-						image_grid_device->set_stream(&os);
-						filter_input_grid_device->set_stream(&os);
-
 						cgh.parallel_for<class grid_copy>(
 							work_items,
 							[filter_input_sizer,
@@ -1174,13 +1376,14 @@ SCENARIO("Applying filter to ConvGrid")
 						filter_output_grid->storage().size(),
 						static_cast<size_t>(filter_output_grid->child_size().prod())};
 
+					auto input_grid_log_storage =
+						filter_input_grid->reset_log(q, work_range.get_local().get(0), 1024UL);
+					auto output_grid_log_storage =
+						filter_output_grid->reset_log(q, work_range.get_local().get(0), 1024UL);
+
 					q.submit(
 						[&](sycl::handler & cgh)
 						{
-							sycl::stream os{2048, 256, cgh};
-							filter_input_grid->set_stream(&os);
-							filter_output_grid->set_stream(&os);
-
 							assert(
 								usm_weights.matrix().rows() ==
 								filter_output_grid->child_size().prod());
@@ -1211,13 +1414,35 @@ SCENARIO("Applying filter to ConvGrid")
 									auto & output_child =
 										filter_output_grid->children().get(group_id);
 
-									assert(input_child.storage().size() == input_child_data.size());
-									assert(local_id < output_child.storage().size());
+									if (input_child.storage().size() != input_child_data.size())
+									{
+										filter_input_grid->log(
+											local_id,
+											"input_child.storage().size() != "
+											"input_child_data.size() i.e. ",
+											input_child.storage().size(),
+											" != ",
+											input_child_data.size(),
+											"\n");
+										return;
+									}
+									if (local_id >= output_child.storage().size())
+									{
+										filter_output_grid->log(
+											local_id,
+											"local_id >= output_child.storage().size() i.e. ",
+											local_id,
+											" >= ",
+											output_child.storage().size(),
+											"\n");
+										return;
+									}
 
 									// TODO(DF): Do we need to construct filter input regions in
-									//  global memory only to copy out again into local memory? I.e.
-									//  will we need the input grid further down the line? Otherwise
-									//  could construct input region here - see next test.
+									//  global memory only to copy out again into local memory?
+									//  I.e. will we need the input grid further down the line?
+									//  Otherwise could construct input region here - see next
+									//  test.
 									item.async_work_group_copy(
 											input_child_data.get_pointer(),
 											sycl::global_ptr<felt2::Scalar>{
@@ -1242,6 +1467,8 @@ SCENARIO("Applying filter to ConvGrid")
 
 					THEN("values are as expected")
 					{
+						CHECK(!filter_input_grid->has_logs());
+						CHECK(!filter_output_grid->has_logs());
 						assert_expected_values();
 					}
 				}  // WHEN("filter is applied to grid using Eigen in a hand-rolled kernel")
@@ -1331,15 +1558,19 @@ SCENARIO("Applying filter to ConvGrid")
 
 					sycl::nd_range<1> work_range{
 						num_work_groups * work_group_size, work_group_size};
+					[[maybe_unused]] auto input_template_children_log_storage =
+						filter_input_template->children().reset_log(
+							q, work_range.get_local().get(0), 1024);
+					[[maybe_unused]] auto input_grid_log_storage =
+						filter_input_grid->reset_log(q, work_range.get_local().get(0), 1024);
+					[[maybe_unused]] auto output_grid_log_storage =
+						filter_output_grid->reset_log(q, work_range.get_local().get(0), 1024);
+					[[maybe_unused]] auto image_grid_log_storage =
+						image_grid_device->reset_log(q, work_range.get_local().get(0), 1024);
 
 					q.submit(
 						[&](sycl::handler & cgh)
 						{
-							sycl::stream os{2048, 256, cgh};
-							filter_input_grid->set_stream(&os);
-							filter_output_grid->set_stream(&os);
-							image_grid_device->set_stream(&os);
-
 							sycl::local_accessor<felt2::Scalar, 2> input_child_data{
 								sycl::range(
 									filters_per_work_group,
@@ -1393,10 +1624,29 @@ SCENARIO("Applying filter to ConvGrid")
 										filter_output_grid->children().get(filter_idx_for_item);
 
 									// Assert invariants.
-									assert(num_cols == input_child.storage().size());
-									assert(
-										static_cast<felt2::PosIdx>(weights.rows()) <=
-										elems_per_filter);
+									if (num_cols != input_child.storage().size())
+									{
+										filter_input_template->children().log(
+											local_id,
+											"num_cols != input_child.storage().size() i.e. ",
+											num_cols,
+											" != ",
+											input_child.storage().size(),
+											"\n");
+										return;
+									}
+									if (static_cast<felt2::PosIdx>(weights.rows()) >
+										elems_per_filter)
+									{
+										filter_output_grid->log(
+											local_id,
+											"weights.rows()	> elems_per_filter i.e. ",
+											weights.rows(),
+											" > ",
+											elems_per_filter,
+											"\n");
+										return;
+									}
 
 									for (felt2::PosIdx simd_col = 0; simd_col < num_cols;
 										 simd_col += elems_per_filter)
@@ -1429,6 +1679,10 @@ SCENARIO("Applying filter to ConvGrid")
 
 					THEN("values are as expected")
 					{
+						CHECK(!filter_input_grid->has_logs());
+						CHECK(!filter_output_grid->has_logs());
+						CHECK(!image_grid_device->has_logs());
+						CHECK(!filter_input_template->children().has_logs());
 						assert_expected_values();
 					}
 				}  // WHEN("filter is applied in kernel that computes filter input on the fly")
@@ -1512,11 +1766,10 @@ SCENARIO("Applying filter to ConvGrid")
 
 					auto image_grid_device =
 						convfelt::make_unique_sycl<convfelt::ByValue<felt2::Scalar, 3, true>>(
-							dev, ctx, image_grid.size(), image_grid.offset(), 0.0f, ctx, dev);
+							dev, ctx, image_grid.size(), image_grid.offset(), 0.0F, ctx, dev);
 
 					image_grid_device->storage().assign(
 						image_grid.storage().begin(), image_grid.storage().end());
-
 
 					oneapi::mkl::blas::column_major::gemm(
 						q,

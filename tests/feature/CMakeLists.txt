@@ -3,14 +3,13 @@
 
 add_executable(
 	convfelt.test.feature
-	main.cpp
 	features/step_definitions/single_backprop.cpp
 )
 target_link_libraries(
 	convfelt.test.feature
 	PRIVATE
-	CucumberCpp::cucumber-cpp-nomain
-	Boost::program_options
+	Boost::test
+	cucumber-cpp-runner::cucumber-cpp-runner
 	fmt::fmt
 	convfelt
 )
