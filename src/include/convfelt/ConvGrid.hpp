@@ -207,9 +207,9 @@ public:
 	{
 		return m_log_impl.text(std::forward<decltype(args)>(args)...);
 	}
-	decltype(auto) reset_log(auto &&... args) noexcept
+	decltype(auto) set_log_storage(auto &&... args) noexcept
 	{
-		return m_log_impl.reset(std::forward<decltype(args)>(args)...);
+		return m_log_impl.set_storage(std::forward<decltype(args)>(args)...);
 	}
 	decltype(auto) has_logs(auto &&... args) const noexcept
 	{
@@ -324,9 +324,9 @@ public:
 	{
 		return m_log_impl.text(std::forward<decltype(args)>(args)...);
 	}
-	decltype(auto) reset_log(auto &&... args) noexcept
+	decltype(auto) set_log_storage(auto &&... args) noexcept
 	{
-		return m_log_impl.reset(std::forward<decltype(args)>(args)...);
+		return m_log_impl.set_storage(std::forward<decltype(args)>(args)...);
 	}
 	decltype(auto) has_logs(auto &&... args) const noexcept
 	{
@@ -594,9 +594,9 @@ public:
 	{
 		return m_log_impl.text(std::forward<decltype(args)>(args)...);
 	}
-	decltype(auto) reset_log(auto &&... args) noexcept
+	decltype(auto) set_log_storage(auto &&... args) noexcept
 	{
-		return m_log_impl.reset(std::forward<decltype(args)>(args)...);
+		return m_log_impl.set_storage(std::forward<decltype(args)>(args)...);
 	}
 	decltype(auto) has_logs(auto &&... args) const noexcept
 	{

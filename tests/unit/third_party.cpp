@@ -1075,8 +1075,6 @@ SCENARIO("Assertion and logging in SYCL")
 		stdex::mdspan<char, Extents, stdex::layout_right> text_nd{
 			text_data.data(), Extents{num_work_items}};
 
-		felt2::components::Log logger;
-
 		WHEN("a kernel with logging is executed")
 		{
 			q.submit(
@@ -1107,7 +1105,10 @@ SCENARIO("Assertion and logging in SYCL")
 
 		WHEN("a kernel with a logger is executed")
 		{
-			auto storage = logger.reset(q, work_items.get(0), 1024);
+			auto storage = felt2::components::Log::make_storage(
+				q.get_device(), q.get_context(), work_items.get(0), 1024UL);
+			felt2::components::Log logger;
+			logger.set_storage(storage);
 
 			q.submit(
 				[&](sycl::handler & cgh)
@@ -1155,8 +1156,9 @@ SCENARIO("SyCL with ConvGrid")
 
 			sycl::queue q{ctx, dev};
 
-			auto log_storage =
-				pgrid->reset_log(q, static_cast<std::size_t>(work_items.get(0)), 1024UL);
+			[[maybe_unused]] auto const log_storage = felt2::components::Log::make_storage(
+				q.get_device(), q.get_context(), work_items.get(0), 1024UL);
+			pgrid->set_log_storage(log_storage);
 
 			q.submit([&](sycl::handler & cgh)
 					 { cgh.prefetch(pgrid->storage().data(), pgrid->storage().size()); });
@@ -1252,10 +1254,10 @@ SCENARIO("Applying filter to ConvGrid")
 				sycl::range<1> work_items{image_grid_device->storage().size()};
 				sycl::queue q{ctx, dev};
 
-				auto image_grid_log_storage =
-					image_grid_device->reset_log(q, work_items.get(0), 1024UL);
-				auto input_grid_log_storage =
-					filter_input_grid_device->reset_log(q, work_items.get(0), 1024UL);
+				[[maybe_unused]] auto const log_storage = felt2::components::Log::make_storage(
+					q.get_device(), q.get_context(), work_items.get(0), 1024UL);
+				image_grid_device->set_log_storage(log_storage);
+				filter_input_grid_device->set_log_storage(log_storage);
 
 				q.submit(
 					[&](sycl::handler & cgh)
@@ -1376,10 +1378,10 @@ SCENARIO("Applying filter to ConvGrid")
 						filter_output_grid->storage().size(),
 						static_cast<size_t>(filter_output_grid->child_size().prod())};
 
-					auto input_grid_log_storage =
-						filter_input_grid->reset_log(q, work_range.get_local().get(0), 1024UL);
-					auto output_grid_log_storage =
-						filter_output_grid->reset_log(q, work_range.get_local().get(0), 1024UL);
+					auto log_storage = felt2::components::Log::make_storage(
+						q.get_device(), q.get_context(), work_range.get_local().get(0), 1024UL);
+					filter_input_grid->set_log_storage(log_storage);
+					filter_output_grid->set_log_storage(log_storage);
 
 					q.submit(
 						[&](sycl::handler & cgh)
@@ -1558,15 +1560,14 @@ SCENARIO("Applying filter to ConvGrid")
 
 					sycl::nd_range<1> work_range{
 						num_work_groups * work_group_size, work_group_size};
-					[[maybe_unused]] auto input_template_children_log_storage =
-						filter_input_template->children().reset_log(
-							q, work_range.get_local().get(0), 1024);
-					[[maybe_unused]] auto input_grid_log_storage =
-						filter_input_grid->reset_log(q, work_range.get_local().get(0), 1024);
-					[[maybe_unused]] auto output_grid_log_storage =
-						filter_output_grid->reset_log(q, work_range.get_local().get(0), 1024);
-					[[maybe_unused]] auto image_grid_log_storage =
-						image_grid_device->reset_log(q, work_range.get_local().get(0), 1024);
+
+					[[maybe_unused]] auto const log_storage = felt2::components::Log::make_storage(
+						q.get_device(), q.get_context(), work_range.get_local().get(0), 1024);
+
+					filter_input_template->children().set_log_storage(log_storage);
+					filter_input_grid->set_log_storage(log_storage);
+					filter_output_grid->set_log_storage(log_storage);
+					image_grid_device->set_log_storage(log_storage);
 
 					q.submit(
 						[&](sycl::handler & cgh)

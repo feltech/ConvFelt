@@ -74,10 +74,10 @@ auto make_unique_sycl(sycl::device const & dev, sycl::context const & ctx, auto 
 template <class T>
 struct SyclDeleter
 {
-	sycl::queue queue;
+	sycl::context ctx;
 	void operator()(T * ptr)
 	{
-		sycl::free(ptr, queue);
+		sycl::free(ptr, ctx);
 	}
 };
 
@@ -85,7 +85,17 @@ template <typename T>
 auto make_unique_sycl_array(sycl::queue const & queue, std::size_t const size)
 {
 	auto * mem_region = sycl::malloc_shared<T>(size, queue);
-	auto ptr = std::unique_ptr<T[], SyclDeleter<T>>{mem_region, SyclDeleter<T>{queue}};
+	auto ptr =
+		std::unique_ptr<T[], SyclDeleter<T>>{mem_region, SyclDeleter<T>{queue.get_context()}};
+	return std::move(ptr);
+}
+
+template <typename T>
+auto make_unique_sycl_array(
+	sycl::device const & dev, sycl::context const & ctx, std::size_t const size)
+{
+	auto * mem_region = sycl::malloc_shared<T>(size, dev, ctx);
+	auto ptr = std::unique_ptr<T[], SyclDeleter<T>>{mem_region, SyclDeleter<T>{ctx}};
 	return std::move(ptr);
 }
 
@@ -172,15 +182,19 @@ struct Log
 {
 	struct Storage
 	{
-		unique_sycl_array_t<char> data;
-		unique_sycl_array_t<etl::string_ext> strs;
+		unique_sycl_array_t<char> char_data;
+		// Cannot be std::vector since no copy constructor.
+		unique_sycl_array_t<etl::string_ext> str_data;
+		std::span<etl::string_ext> strs;
 	};
-	std::span<etl::string_ext> str_span_;
+	inline static Storage const null_storage{nullptr, nullptr, {}};
+
+	std::span<etl::string_ext> strs_;
 
 	template <class... Args>
 	constexpr bool log(std::size_t const stream_idx, Args... args) const noexcept
 	{
-		etl::string_ext & str = str_span_[stream_idx];
+		etl::string_ext & str = strs_[stream_idx];
 		(
 			[&]
 			{
@@ -201,26 +215,34 @@ struct Log
 
 	[[nodiscard]] constexpr bool has_logs() const noexcept
 	{
-		return !std::ranges::all_of(str_span_, [](auto const & str) { return str.empty(); });
+		return !std::ranges::all_of(strs_, [](auto const & str) { return str.empty(); });
 	}
 
-	[[nodiscard]] constexpr std::string_view text(std::size_t const stream_idx) const
+	[[nodiscard]] constexpr std::string_view text(std::size_t const stream_idx) const noexcept
 	{
-		return std::string_view{str_span_[stream_idx].data(), str_span_[stream_idx].size()};
+		return std::string_view{strs_[stream_idx].data(), strs_[stream_idx].size()};
 	}
 
-	[[nodiscard]] Storage reset(
-		sycl::queue const & queue, std::size_t const num_streams, std::size_t const max_msg_size)
-	{
-		Storage storage{
-			make_unique_sycl_array<char>(queue, num_streams * max_msg_size),
-			make_unique_sycl_array<etl::string_ext>(queue, num_streams)};
+	void set_storage(Storage const& storage) {
+		strs_ = storage.strs;
+	}
 
-		stdx::mdspan const data_span{storage.data.get(), num_streams, max_msg_size};
-		str_span_ = std::span{storage.strs.get(), num_streams};
+	[[nodiscard]] static Storage make_storage(
+		sycl::device const & dev,
+		sycl::context const & ctx,
+		std::size_t const num_streams,
+		std::size_t const max_msg_size)
+	{
+		auto char_data = make_unique_sycl_array<char>(dev, ctx, num_streams * max_msg_size);
+		auto str_data = make_unique_sycl_array<etl::string_ext>(dev, ctx, num_streams);
+		std::span const str_data_span{str_data.get(), num_streams};
+		Storage storage{std::move(char_data), std::move(str_data), str_data_span};
+
+		stdx::mdspan const char_data_span{storage.char_data.get(), num_streams, max_msg_size};
 
 		for (std::size_t stream_idx = 0; stream_idx < num_streams; ++stream_idx)
-			new (&str_span_[stream_idx]) etl::string_ext{&data_span(stream_idx, 0), max_msg_size};
+			new (&str_data_span[stream_idx])
+				etl::string_ext{&char_data_span(stream_idx, 0), max_msg_size};
 
 		return storage;
 	}
