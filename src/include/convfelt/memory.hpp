@@ -11,6 +11,9 @@ template <typename T>
 auto make_unique_sycl(sycl::device const & dev, sycl::context const & ctx, auto &&... args)
 {
 	auto * mem_region = sycl::malloc_shared<T>(1, dev, ctx);
+	if (!mem_region) {
+		throw std::runtime_error{"make_unique_sycl: sycl::malloc_shared failed"};
+	}
 	auto const deleter = [ctx](T * ptr) { sycl::free(ptr, ctx); };
 	auto ptr = std::unique_ptr<T, decltype(deleter)>{mem_region, deleter};
 

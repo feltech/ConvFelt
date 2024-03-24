@@ -47,6 +47,8 @@ target_compile_definitions(
 	convfelt.test.unit
 	PRIVATE
 	CONVFELT_TEST_RESOURCE_DIR=\"${PROJECT_SOURCE_DIR}/tests/resources\"
+	# Disable fatal assertions.
+	FELT2_DEBUG_NONFATAL
 )
 
 target_link_options(

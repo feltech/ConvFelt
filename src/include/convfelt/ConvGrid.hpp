@@ -328,6 +328,10 @@ public:
 	{
 		return m_log_impl.set_storage(std::forward<decltype(args)>(args)...);
 	}
+	decltype(auto) set_log_stream(auto &&... args) noexcept
+	{
+		return m_log_impl.set_stream(std::forward<decltype(args)>(args)...);
+	}
 	decltype(auto) has_logs(auto &&... args) const noexcept
 	{
 		return m_log_impl.has_logs(std::forward<decltype(args)>(args)...);
@@ -596,7 +600,13 @@ public:
 	}
 	decltype(auto) set_log_storage(auto &&... args) noexcept
 	{
+		m_children.set_log_storage(std::forward<decltype(args)>(args)...);
 		return m_log_impl.set_storage(std::forward<decltype(args)>(args)...);
+	}
+	decltype(auto) set_log_stream(auto &&... args) noexcept
+	{
+		m_children.set_log_stream(std::forward<decltype(args)>(args)...);
+		return m_log_impl.set_stream(std::forward<decltype(args)>(args)...);
 	}
 	decltype(auto) has_logs(auto &&... args) const noexcept
 	{

@@ -369,17 +369,28 @@ struct AssertBounds
 	Size const & m_size_impl;
 	Storage const & m_storage_impl;
 
-	void assert_pos_bounds(const PosIdx pos_idx_, const char * title_) const
+	void aborter() const
 	{
-		assert_pos_idx_bounds(pos_idx_, title_);
+#ifndef FELT2_DEBUG_NONFATAL
+		// TODO(DF): Need a less vendor-specific solution. AdaptiveCpp generic JIT backend is
+		//  __SYCL_SINGLE_SOURCE__ yet provides (as below) vendor-soecific macros to target code to
+		//  host vs. device.
+		__hipsycl_if_target_device(asm("trap;"));
+		__hipsycl_if_target_host(assert(false && "Assertion failure: check logs"));
+#endif
 	}
 
-	void assert_pos_idx_bounds(const VecDi & pos_, const char * title_) const
+	bool assert_pos_bounds(const PosIdx pos_idx_, const char * title_) const
 	{
-		assert_pos_bounds(pos_, title_);
+		return assert_pos_idx_bounds(pos_idx_, title_);
 	}
 
-	void assert_pos_bounds(const VecDi & pos_, const char * title_) const
+	bool assert_pos_idx_bounds(const VecDi & pos_, const char * title_) const
+	{
+		return assert_pos_bounds(pos_, title_);
+	}
+
+	bool assert_pos_bounds(const VecDi & pos_, const char * title_) const
 	{
 		if (!m_size_impl.inside(pos_))
 		{
@@ -393,10 +404,14 @@ struct AssertBounds
 				" - ",
 				max_extent,
 				"\n");
+
+			aborter();
+			return false;
 		}
+		return true;
 	}
 
-	void assert_pos_idx_bounds(const PosIdx pos_idx_, const char * title_) const
+	bool assert_pos_idx_bounds(const PosIdx pos_idx_, const char * title_) const
 	{
 		if (pos_idx_ >= m_storage_impl.storage().size())
 		{
@@ -412,7 +427,11 @@ struct AssertBounds
 				" is greater than extent ",
 				m_storage_impl.storage().size(),
 				"\n");
+
+			aborter();
+			return false;
 		}
+		return true;
 	}
 };
 
@@ -457,7 +476,7 @@ struct Activate
 	 */
 	void activate()
 	{
-//		assert(m_storage_impl.get().storage().size() == 0);
+		//		assert(m_storage_impl.get().storage().size() == 0);
 		// Note: resize() on libstdc++ 11 invokes operator=(), i.e. Copy/MoveAssignable, when we
 		// only want to enforce Copy/MoveInsertable, i.e. copy/move constructor. So here we
 		// essentially reimplement resize() (with the added precondition that data is empty).

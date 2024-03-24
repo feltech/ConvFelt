@@ -189,9 +189,9 @@ struct Log
 	template <class... Args>
 	constexpr bool log(Args &&... args) const noexcept
 	{
-		std::size_t const stream_idx = stream_id_ ? *stream_id_ % strs_.size() : 0;
+		std::size_t const stream_idx = stream_id_ ? *stream_id_ : 0;
 
-		etl::string_ext & str = strs_[static_cast<std::size_t>(stream_idx) % strs_.size()];
+		etl::string_ext & str = strs_[stream_idx % strs_.size()];
 
 		(
 			[&]

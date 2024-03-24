@@ -1300,11 +1300,12 @@ SCENARIO("SyCL with ConvGrid")
 		sycl::device dev{sycl::gpu_selector_v};
 		using ConvGrid = convfelt::ConvGridTD<float, 3, true>;
 
-		auto const pgrid = convfelt::make_unique_sycl<ConvGrid>(
+		auto pgrid = convfelt::make_unique_sycl<ConvGrid>(
 			dev, ctx, felt2::Vec3i{4, 4, 3}, felt2::Vec2i{2, 2}, ctx, dev);
 
 		std::fill(pgrid->storage().begin(), pgrid->storage().end(), 3);
-		CHECK(pgrid->children().storage().size() > 1);
+		REQUIRE(pgrid->children().storage().size() > 0);
+		CHECK(pgrid->children().storage().size() == 4);
 		CHECK(pgrid->children().storage()[0].storage().size() > 1);
 		CHECK(&pgrid->children().storage()[0].storage()[0] == &pgrid->storage()[0]);
 
@@ -1343,6 +1344,48 @@ SCENARIO("SyCL with ConvGrid")
 				CHECK(!pgrid->has_logs());
 
 				for (auto const val : convfelt::iter::val(*pgrid)) CHECK(val == 6);
+			}
+		}
+
+		WHEN("out of bounds access")
+		{
+//			sycl::device cpu_dev{sycl::cpu_selector_v};
+			sycl::range<1> work_items{pgrid->children().storage().size()};
+			sycl::queue q{ctx, dev, &async_handler};
+
+			[[maybe_unused]] auto log_storage = felt2::components::Log::make_storage(
+				q.get_device(), q.get_context(), work_items.get(0), 1024UL);
+			pgrid->set_log_storage(log_storage);
+
+			q.submit(
+				[&](sycl::handler & cgh)
+				{
+					cgh.parallel_for<class grid_mult>(
+						work_items,
+						[pgrid = pgrid.get()](sycl::id<1> tid)
+						{
+							auto const log_id = static_cast<std::size_t>(tid);
+							pgrid->set_log_stream(&log_id);
+
+							auto child_idx = static_cast<felt2::PosIdx>(tid) + 1;
+							pgrid->children().get(child_idx);
+						});
+				});
+
+			// Note: FELT2_DEBUG_NONFATAL macro enabled so assertion doesn't cause a kernel crash,
+			// since kernel crashes are "sticky" in CUDA and would require the whole host process to
+			// be restarted.
+			q.wait_and_throw();
+
+			THEN("out of bounds access is logged")
+			{
+				CHECK(pgrid->text(0) == "");
+				CHECK(pgrid->text(1) == "");
+				CHECK(pgrid->text(2) == "");
+				CHECK(
+					pgrid->text(3) ==
+					"AssertionError: get:  assert_pos_idx_bounds(4) i.e. (0, 0, 0) is greater than "
+					"extent 4\n");
 			}
 		}
 	}
