@@ -3,6 +3,7 @@
 #pragma once
 
 #include <cstddef>
+#include <cstdint>
 #include <ostream>
 #include <ranges>
 
@@ -19,13 +20,6 @@ namespace stdx = std::experimental;
 
 namespace etl::private_to_string
 {
-// template <typename T, std::size_t D>
-// const etl::istring & to_string(
-//	const felt2::VecDT<T, D> & value, etl::istring & str, bool append = false)
-//{
-//	etl::format_spec format;
-//	return to_string(value, str, format, append);
-// }
 
 template <typename TIString, typename T, felt2::Dim D>
 const TIString & to_string(
@@ -190,11 +184,16 @@ struct Log
 	inline static Storage const null_storage{nullptr, nullptr, {}};
 
 	std::span<etl::string_ext> strs_;
+	mutable sycl::private_ptr<std::size_t const> stream_id_;
 
 	template <class... Args>
-	constexpr bool log(std::size_t const stream_idx, Args... args) const noexcept
+	constexpr bool log(int32_t const stream_id, Args &&... args) const noexcept
 	{
-		etl::string_ext & str = strs_[stream_idx];
+		std::size_t const stream_idx =
+			(stream_id < 0) ? (stream_id_ ? *stream_id_ : 0) : static_cast<std::size_t>(stream_id);
+
+		etl::string_ext & str = strs_[static_cast<std::size_t>(stream_idx) % strs_.size()];
+
 		(
 			[&]
 			{
@@ -223,8 +222,13 @@ struct Log
 		return std::string_view{strs_[stream_idx].data(), strs_[stream_idx].size()};
 	}
 
-	void set_storage(Storage const& storage) {
+	void set_storage(Storage const & storage)
+	{
 		strs_ = storage.strs;
+	}
+
+	void set_stream(std::size_t const* stream_id) const {
+		stream_id_ = stream_id;
 	}
 
 	[[nodiscard]] static Storage make_storage(
@@ -242,7 +246,7 @@ struct Log
 
 		for (std::size_t stream_idx = 0; stream_idx < num_streams; ++stream_idx)
 			new (&str_data_span[stream_idx])
-				etl::string_ext{&char_data_span(stream_idx, 0), max_msg_size};
+				etl::string_ext{&char_data_span[stream_idx, 0], max_msg_size};
 
 		return storage;
 	}

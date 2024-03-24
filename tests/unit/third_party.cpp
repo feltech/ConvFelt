@@ -1021,7 +1021,7 @@ SCENARIO("Basic oneMKL usage")
 		{
 			{
 				sycl::gpu_selector selector;
-				sycl::queue q{selector};
+				sycl::queue q{selector, &async_handler};
 				sycl::buffer<float> buff_a(a.data(), a.size());
 				sycl::buffer<float> buff_b(b.data(), b.size());
 
@@ -1058,22 +1058,46 @@ void append(String & str, Args... args)
 		...);
 }
 
+struct ThreadAppender
+{
+	sycl::private_ptr<std::size_t const> tid{};
+
+	template <class... Args>
+	void append(etl::string_ext & str, Args... args) const
+	{
+		etl::to_string(*tid, str, true);
+		str += ": ";
+		(
+			[&]
+			{
+				if constexpr (requires { std::string_view{args}; })
+				{
+					str += args;
+				}
+				else
+				{
+					etl::to_string(args, str, true);
+				}
+			}(),
+			...);
+	}
+};
+
 SCENARIO("Assertion and logging in SYCL")
 {
 	GIVEN("queue and work range")
 	{
-		sycl::queue q{sycl::gpu_selector_v};
+		sycl::queue q{sycl::gpu_selector_v, &async_handler};
 
 		static constexpr std::size_t num_work_items = 5;
-		static constexpr std::size_t max_msg_size = 20;
+		static constexpr std::size_t max_msg_size = 30;
 
 		sycl::range<1> work_items{num_work_items};
 
 		using Allocator = sycl::usm_allocator<char, sycl::usm::alloc::shared>;
 		using Extents = stdex::extents<char, std::dynamic_extent, max_msg_size>;
 		std::vector<char, Allocator> text_data(num_work_items * max_msg_size, '\0', Allocator{q});
-		stdex::mdspan<char, Extents, stdex::layout_right> text_nd{
-			text_data.data(), Extents{num_work_items}};
+		stdex::mdspan text_nd{text_data.data(), Extents{num_work_items}};
 
 		WHEN("a kernel with logging is executed")
 		{
@@ -1084,10 +1108,7 @@ SCENARIO("Assertion and logging in SYCL")
 						work_items,
 						[text_nd](sycl::id<1> tid)
 						{
-							//							etl::string_ext
-							etl::string_ext text{&text_nd(static_cast<int>(tid), 0), max_msg_size};
-							//							tex += "Hello from thread ";
-							// etl::to_string(static_cast<int>(tid), text, true);
+							etl::string_ext text{&text_nd[static_cast<int>(tid), 0], max_msg_size};
 							append(text, "Hello from thread ", static_cast<int>(tid));
 						});
 				});
@@ -1096,13 +1117,43 @@ SCENARIO("Assertion and logging in SYCL")
 			{
 				for (int tid = 0; tid < text_nd.extents().extent(0); ++tid)
 				{
-					std::string_view const msg{&text_nd(tid, 0)};
+					std::string_view const msg{&text_nd[tid, 0]};
 
 					CHECK(msg == fmt::format("Hello from thread {}", tid));
 				}
 			}
 		}
+		WHEN("a kernel with a logger that relies on private memory is executed")
+		{
+			auto appender =
+				felt2::make_unique_sycl<ThreadAppender>(1, q.get_device(), q.get_context());
 
+			q.submit(
+				[&](sycl::handler & cgh)
+				{
+					cgh.parallel_for<class vector_add>(
+						work_items,
+						[text_nd, appender = appender.get()](sycl::id<1> tid)
+						{
+							std::size_t const tidsz = tid;
+							appender->tid = &tidsz;
+
+							etl::string_ext text{&text_nd[static_cast<int>(tid), 0], max_msg_size};
+							appender->append(text, "Hello from thread ", static_cast<int>(tid));
+						});
+				});
+			q.wait_and_throw();
+
+			THEN("log is output")
+			{
+				for (int tid = 0; tid < text_nd.extents().extent(0); ++tid)
+				{
+					std::string_view const msg{&text_nd[tid, 0]};
+
+					CHECK(msg == fmt::format("{}: Hello from thread {}", tid, tid));
+				}
+			}
+		}
 		WHEN("a kernel with a logger is executed")
 		{
 			auto storage = felt2::components::Log::make_storage(
@@ -1115,12 +1166,8 @@ SCENARIO("Assertion and logging in SYCL")
 				{
 					cgh.parallel_for<class vector_add>(
 						work_items,
-						[logger](sycl::id<1> tid) {
-							logger.log(
-								static_cast<std::size_t>(tid),
-								"Hello from thread ",
-								static_cast<int>(tid));
-						});
+						[logger](sycl::id<1> tid)
+						{ logger.log(tid, "Hello from thread ", static_cast<int>(tid)); });
 				});
 			q.wait_and_throw();
 			THEN("log is output")
@@ -1129,6 +1176,147 @@ SCENARIO("Assertion and logging in SYCL")
 				{
 					CHECK(logger.text(tid) == fmt::format("Hello from thread {}", tid));
 				}
+			}
+		}
+		WHEN("a kernel logs to unexpected stream ids")
+		{
+			auto storage = felt2::components::Log::make_storage(
+				q.get_device(), q.get_context(), work_items.get(0), 1024UL);
+			felt2::components::Log logger;
+			logger.set_storage(storage);
+
+			q.submit(
+				[&](sycl::handler & cgh)
+				{
+					cgh.parallel_for<class vector_add>(
+						work_items,
+						[logger](sycl::id<1> tid)
+						{
+							logger.log(
+								static_cast<std::size_t>(2 * tid),
+								"Hello from thread ",
+								static_cast<int>(tid),
+								"\n");
+						});
+				});
+			q.wait_and_throw();
+
+			THEN("log output stream is a circular buffer")
+			{
+				for (std::size_t tid = 0; tid < work_items.get(0); ++tid)
+				{
+					CAPTURE(tid);
+					CHECK(
+						logger.text((2 * tid) % work_items.get(0)) ==
+						fmt::format("Hello from thread {}\n", tid));
+				}
+			}
+		}
+
+		WHEN("a kernel logs to thread-local stream")
+		{
+			auto storage = felt2::components::Log::make_storage(
+				q.get_device(), q.get_context(), work_items.get(0), 1024UL);
+			felt2::components::Log logger;
+			logger.set_storage(storage);
+
+			q.submit(
+				[&](sycl::handler & cgh)
+				{
+					cgh.parallel_for<class vector_add>(
+						work_items,
+						[logger](sycl::id<1> tid)
+						{
+							std::size_t const stream_id = tid.get(0);
+							logger.set_stream(&stream_id);
+
+							logger.log(-1, "Hello from thread ", static_cast<int>(tid), "\n");
+						});
+				});
+			q.wait_and_throw();
+
+			THEN("log output stream is a circular buffer")
+			{
+				for (std::size_t tid = 0; tid < work_items.get(0); ++tid)
+				{
+					CAPTURE(tid);
+					CHECK(logger.text(tid) == fmt::format("Hello from thread {}\n", tid));
+				}
+			}
+		}
+
+		WHEN("a kernel logs to thread-local stream and no stream is set")
+		{
+			auto storage = felt2::components::Log::make_storage(
+				q.get_device(), q.get_context(), work_items.get(0), 1024UL);
+			felt2::components::Log logger;
+			logger.set_storage(storage);
+
+			q.submit(
+				[&](sycl::handler & cgh)
+				{
+					cgh.parallel_for<class vector_add>(
+						work_items,
+						[logger](sycl::id<1> tid)
+						{ logger.log(-1, "Hello from thread ", static_cast<int>(tid), "\n"); });
+				});
+			q.wait_and_throw();
+
+			THEN("all logs go to stream zero")
+			{
+				CAPTURE(logger.text(0));
+				CHECK_THAT(
+					std::string{logger.text(0)},
+					Catch::Matchers::StartsWith(fmt::format("Hello from thread")));
+
+				for (std::size_t tid = 1; tid < work_items.get(0); ++tid)
+					CHECK(logger.text(tid) == "");
+			}
+		}
+		WHEN("a kernel logs to thread-local stream then again with no stream set")
+		{
+			auto storage = felt2::components::Log::make_storage(
+				q.get_device(), q.get_context(), work_items.get(0), 1024UL);
+			felt2::components::Log logger;
+			logger.set_storage(storage);
+
+			q.submit(
+				[&](sycl::handler & cgh)
+				{
+					cgh.parallel_for<class vector_add>(
+						work_items,
+						[logger](sycl::id<1> tid)
+						{
+							std::size_t const stream_id = tid.get(0);
+							logger.set_stream(&stream_id);
+
+							logger.log(-1, "Hello from thread ", static_cast<int>(tid), "\n");
+						});
+				});
+			q.wait_and_throw();
+			q.submit(
+				[&](sycl::handler & cgh)
+				{
+					cgh.parallel_for<class vector_add>(
+						work_items,
+						[logger](sycl::id<1> tid) {
+							logger.log(-1, "Hello again from thread ", static_cast<int>(tid), "\n");
+						});
+				});
+			q.wait_and_throw();
+
+			THEN("second set of logs go to stream zero")
+			{
+				CAPTURE(logger.text(0));
+				CHECK_THAT(
+					std::string{logger.text(0)},
+					Catch::Matchers::StartsWith(
+						fmt::format("Hello from thread 0\nHello again from thread")));
+
+				for (std::size_t tid = 1; tid < work_items.get(0); ++tid)
+					CHECK(
+						logger.text(tid) ==
+						std::format("Hello from thread {}\n", static_cast<int>(tid)));
 			}
 		}
 	}
@@ -1154,7 +1342,7 @@ SCENARIO("SyCL with ConvGrid")
 		{
 			sycl::range<1> work_items{pgrid->children().storage().size()};
 
-			sycl::queue q{ctx, dev};
+			sycl::queue q{ctx, dev, &async_handler};
 
 			[[maybe_unused]] auto const log_storage = felt2::components::Log::make_storage(
 				q.get_device(), q.get_context(), work_items.get(0), 1024UL);
@@ -1252,7 +1440,7 @@ SCENARIO("Applying filter to ConvGrid")
 				auto filter_input_grid_device = convfelt::make_unique_sycl<FilterGrid>(
 					dev, ctx, input_size, filter_input_sizer.filter_window(), ctx, dev);
 				sycl::range<1> work_items{image_grid_device->storage().size()};
-				sycl::queue q{ctx, dev};
+				sycl::queue q{ctx, dev, &async_handler};
 
 				[[maybe_unused]] auto const log_storage = felt2::components::Log::make_storage(
 					q.get_device(), q.get_context(), work_items.get(0), 1024UL);
@@ -1364,7 +1552,7 @@ SCENARIO("Applying filter to ConvGrid")
 
 				WHEN("filter is applied to grid using Eigen in a hand-rolled kernel")
 				{
-					sycl::queue q{ctx, dev};
+					sycl::queue q{ctx, dev, &async_handler};
 
 					q.submit([pgrid = filter_input_grid.get()](sycl::handler & cgh)
 							 { cgh.prefetch(pgrid->bytes().data(), pgrid->bytes().size()); });
@@ -1477,7 +1665,7 @@ SCENARIO("Applying filter to ConvGrid")
 
 				WHEN("filter is applied in kernel that computes filter input on the fly")
 				{
-					sycl::queue q{ctx, dev};
+					sycl::queue q{ctx, dev, &async_handler};
 
 					auto filter_input_template = convfelt::make_unique_sycl<
 						convfelt::TemplateParentGridTD<felt2::Scalar, 3, true>>(
@@ -1690,7 +1878,7 @@ SCENARIO("Applying filter to ConvGrid")
 
 				WHEN("filter is applied to grid using oneMKL")
 				{
-					sycl::queue q{ctx, dev};
+					sycl::queue q{ctx, dev, &async_handler};
 
 					oneapi::mkl::blas::column_major::gemm(
 						q,
@@ -1763,7 +1951,7 @@ SCENARIO("Applying filter to ConvGrid")
 
 				WHEN("filter is applied to grid using oneMKL")
 				{
-					sycl::queue q{ctx, dev};
+					sycl::queue q{ctx, dev, &async_handler};
 
 					auto image_grid_device =
 						convfelt::make_unique_sycl<convfelt::ByValue<felt2::Scalar, 3, true>>(
