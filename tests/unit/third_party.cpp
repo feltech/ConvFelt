@@ -1167,7 +1167,11 @@ SCENARIO("Assertion and logging in SYCL")
 					cgh.parallel_for<class vector_add>(
 						work_items,
 						[logger](sycl::id<1> tid)
-						{ logger.log(tid, "Hello from thread ", static_cast<int>(tid)); });
+						{
+							auto const stream_id = static_cast<std::size_t>(tid);
+							logger.set_stream(&stream_id);
+							logger.log("Hello from thread ", stream_id);
+						});
 				});
 			q.wait_and_throw();
 			THEN("log is output")
@@ -1192,11 +1196,9 @@ SCENARIO("Assertion and logging in SYCL")
 						work_items,
 						[logger](sycl::id<1> tid)
 						{
-							logger.log(
-								static_cast<std::size_t>(2 * tid),
-								"Hello from thread ",
-								static_cast<int>(tid),
-								"\n");
+							auto const stream_id = static_cast<std::size_t>(2 * tid);
+							logger.set_stream(&stream_id);
+							logger.log("Hello from thread ", static_cast<int>(tid), "\n");
 						});
 				});
 			q.wait_and_throw();
@@ -1209,38 +1211,6 @@ SCENARIO("Assertion and logging in SYCL")
 					CHECK(
 						logger.text((2 * tid) % work_items.get(0)) ==
 						fmt::format("Hello from thread {}\n", tid));
-				}
-			}
-		}
-
-		WHEN("a kernel logs to thread-local stream")
-		{
-			auto storage = felt2::components::Log::make_storage(
-				q.get_device(), q.get_context(), work_items.get(0), 1024UL);
-			felt2::components::Log logger;
-			logger.set_storage(storage);
-
-			q.submit(
-				[&](sycl::handler & cgh)
-				{
-					cgh.parallel_for<class vector_add>(
-						work_items,
-						[logger](sycl::id<1> tid)
-						{
-							std::size_t const stream_id = tid.get(0);
-							logger.set_stream(&stream_id);
-
-							logger.log(-1, "Hello from thread ", static_cast<int>(tid), "\n");
-						});
-				});
-			q.wait_and_throw();
-
-			THEN("log output stream is a circular buffer")
-			{
-				for (std::size_t tid = 0; tid < work_items.get(0); ++tid)
-				{
-					CAPTURE(tid);
-					CHECK(logger.text(tid) == fmt::format("Hello from thread {}\n", tid));
 				}
 			}
 		}
@@ -1258,7 +1228,7 @@ SCENARIO("Assertion and logging in SYCL")
 					cgh.parallel_for<class vector_add>(
 						work_items,
 						[logger](sycl::id<1> tid)
-						{ logger.log(-1, "Hello from thread ", static_cast<int>(tid), "\n"); });
+						{ logger.log("Hello from thread ", static_cast<int>(tid), "\n"); });
 				});
 			q.wait_and_throw();
 
@@ -1273,6 +1243,7 @@ SCENARIO("Assertion and logging in SYCL")
 					CHECK(logger.text(tid) == "");
 			}
 		}
+
 		WHEN("a kernel logs to thread-local stream then again with no stream set")
 		{
 			auto storage = felt2::components::Log::make_storage(
@@ -1290,7 +1261,7 @@ SCENARIO("Assertion and logging in SYCL")
 							std::size_t const stream_id = tid.get(0);
 							logger.set_stream(&stream_id);
 
-							logger.log(-1, "Hello from thread ", static_cast<int>(tid), "\n");
+							logger.log("Hello from thread ", static_cast<int>(tid), "\n");
 						});
 				});
 			q.wait_and_throw();
@@ -1299,9 +1270,8 @@ SCENARIO("Assertion and logging in SYCL")
 				{
 					cgh.parallel_for<class vector_add>(
 						work_items,
-						[logger](sycl::id<1> tid) {
-							logger.log(-1, "Hello again from thread ", static_cast<int>(tid), "\n");
-						});
+						[logger](sycl::id<1> tid)
+						{ logger.log("Hello again from thread ", static_cast<int>(tid), "\n"); });
 				});
 			q.wait_and_throw();
 

@@ -2,10 +2,10 @@
 // SPDX-License-Identifier: MIT
 #pragma once
 
+#include <algorithm>
 #include <cstddef>
 #include <cstdint>
-#include <ostream>
-#include <ranges>
+#include <span>
 
 #include <etl/private/to_string_helper.h>
 #include <etl/string.h>
@@ -187,10 +187,9 @@ struct Log
 	mutable sycl::private_ptr<std::size_t const> stream_id_;
 
 	template <class... Args>
-	constexpr bool log(int32_t const stream_id, Args &&... args) const noexcept
+	constexpr bool log(Args &&... args) const noexcept
 	{
-		std::size_t const stream_idx =
-			(stream_id < 0) ? (stream_id_ ? *stream_id_ : 0) : static_cast<std::size_t>(stream_id);
+		std::size_t const stream_idx = stream_id_ ? *stream_id_ % strs_.size() : 0;
 
 		etl::string_ext & str = strs_[static_cast<std::size_t>(stream_idx) % strs_.size()];
 
@@ -227,7 +226,8 @@ struct Log
 		strs_ = storage.strs;
 	}
 
-	void set_stream(std::size_t const* stream_id) const {
+	void set_stream(std::size_t const * stream_id) const
+	{
 		stream_id_ = stream_id;
 	}
 

@@ -116,7 +116,7 @@ template <class T>
 concept HasLog = requires(T t)
 {
 	{
-		t.log(std::declval<std::size_t>())
+		t.log()
 	} -> std::convertible_to<bool>;
 };
 
@@ -385,7 +385,6 @@ struct AssertBounds
 		{
 			typename Size::VecDi max_extent = m_size_impl.offset() + m_size_impl.size();
 			m_log_impl.log(
-				0,
 				"AssertionError: ",
 				title_,
 				" assert_pos_bounds",
@@ -404,7 +403,6 @@ struct AssertBounds
 			auto pos = m_size_impl.index(pos_idx_);
 
 			m_log_impl.log(
-				0,
 				"AssertionError: ",
 				title_,
 				" assert_pos_idx_bounds(",
@@ -480,7 +478,7 @@ struct Activate
 		{
 			const VecDi & pos_min = m_size_impl.get().offset();
 			const VecDi & pos_max = (m_size_impl.get().size() + pos_min - VecDi::Constant(1));
-			m_log_impl.log(0, title_, ": inactive grid ", pos_min, "-", pos_max, "\n");
+			m_log_impl.log(title_, ": inactive grid ", pos_min, "-", pos_max, "\n");
 		}
 	}
 };
