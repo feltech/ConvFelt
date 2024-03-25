@@ -84,7 +84,7 @@ template <HasStorage Storage>
 struct MatrixMap
 {
 	/// Type of data to store in grid nodes.
-	using Leaf = storage_leaf_t<Storage>;
+	using Leaf = StorageLeafT<Storage>;
 	using Matrix = Eigen::Map<Eigen::Matrix<Leaf, Eigen::Dynamic, Eigen::Dynamic, Eigen::ColMajor>>;
 
 	felt2::Dim m_rows;

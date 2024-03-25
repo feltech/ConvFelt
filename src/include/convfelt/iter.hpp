@@ -16,28 +16,28 @@ namespace concepts
 namespace helpers
 {
 template <class G>
-constexpr felt2::Dim DimFor = std::decay_t<G>::Traits::k_dims;
+constexpr felt2::Dim k_dim_for = std::decay_t<G>::Traits::k_dims;
 
 template <class G>
-using VecDiFor = felt2::VecDi<DimFor<G>>;
+using VecDiFor = felt2::VecDi<k_dim_for<G>>;
 }  // namespace helpers
 
 namespace detail
 {
 // clang-format off
 template <typename T>
-concept Grid = requires(T v)
+concept Grid = requires(T v_)
 {
 	typename helpers::VecDiFor<T>;
-	{v.offset()} -> ranges::convertible_to<helpers::VecDiFor<T>>;
-	{v.size()} -> ranges::convertible_to<helpers::VecDiFor<T>>;
+	{v_.offset()} -> ranges::convertible_to<helpers::VecDiFor<T>>;
+	{v_.size()} -> ranges::convertible_to<helpers::VecDiFor<T>>;
 };
 
 template <typename T>
-concept GridWithStorage = requires(T v)
+concept GridWithStorage = requires(T v_)
 {
 	requires Grid<T>;
-	{v.storage().size()} -> std::same_as<felt2::PosIdx>;
+	{v_.storage().size()} -> std::same_as<felt2::PosIdx>;
 };
 // clang-format on
 }  // namespace detail
@@ -56,46 +56,46 @@ concept Integral = requires { ranges::integral<std::decay<T>>; };
 
 namespace iter
 {
-static constexpr auto idx(concepts::Integral auto... args)
+static constexpr auto idx(concepts::Integral auto... args_)
 {
-	return ranges::views::indices(std::forward<decltype(args)>(args)...);
+	return ranges::views::indices(std::forward<decltype(args_)>(args_)...);
 };
 
-static constexpr auto pos_idx(concepts::GridWithStorage auto & grid)
+static constexpr auto pos_idx(concepts::GridWithStorage auto & grid_)
 {
-	return idx(grid.storage().size());
+	return idx(grid_.storage().size());
 };
 
-static inline auto pos(concepts::Grid auto & grid)
-	-> cppcoro::generator<concepts::helpers::VecDiFor<decltype(grid)>>
+static inline auto pos(concepts::Grid auto & grid_)
+	-> cppcoro::generator<concepts::helpers::VecDiFor<decltype(grid_)>>
 {
-	for (auto pos_idx : idx(felt2::PosIdx(grid.size().prod())))
-		co_yield grid.offset() + felt2::index(pos_idx, grid.size());
+	for (auto pos_idx : idx(felt2::PosIdx(grid_.size().prod())))
+		co_yield grid_.offset() + felt2::index(pos_idx, grid_.size());
 };
 
 template <class G>
 using IdxAndPos = std::tuple<felt2::PosIdx, concepts::helpers::VecDiFor<G>>;
 
-static inline auto idx_and_pos(concepts::Grid auto & grid)
-	-> cppcoro::generator<IdxAndPos<decltype(grid)>>
+static inline auto idx_and_pos(concepts::Grid auto & grid_)
+	-> cppcoro::generator<IdxAndPos<decltype(grid_)>>
 {
-	using VecDi = concepts::helpers::VecDiFor<decltype(grid)>;
+	using VecDi = concepts::helpers::VecDiFor<decltype(grid_)>;
 
-	for (auto const pos_idx : idx(felt2::PosIdx(grid.size().prod())))
+	for (auto const pos_idx : idx(felt2::PosIdx(grid_.size().prod())))
 	{
-		VecDi const pos = grid.offset() + felt2::index(pos_idx, grid.size());
-		co_yield {pos_idx, pos};
+		VecDi const pos = grid_.offset() + felt2::index(pos_idx, grid_.size());
+		co_yield{pos_idx, pos};
 	}
 };
 
-static constexpr decltype(auto) val(concepts::GridWithStorage auto & grid)
+static constexpr decltype(auto) val(concepts::GridWithStorage auto & grid_)
 {
-	return grid.storage();
+	return grid_.storage();
 };
 
-static constexpr decltype(auto) idx_and_val(concepts::GridWithStorage auto & grid)
+static constexpr decltype(auto) idx_and_val(concepts::GridWithStorage auto & grid_)
 {
-	return ranges::views::enumerate(grid.storage());
+	return ranges::views::enumerate(grid_.storage());
 };
 
 }  // namespace iter

@@ -18,20 +18,20 @@
 namespace felt2::components
 {
 
-constexpr auto unwrap(auto && val)
+constexpr auto unwrap(auto && val_)
 {
-	return static_cast<std::unwrap_reference_t<std::decay_t<decltype(val)>>>(
-		std::forward<decltype(val)>(val));
+	return static_cast<std::unwrap_reference_t<std::decay_t<decltype(val_)>>>(
+		std::forward<decltype(val_)>(val_));
 }
 
 template <class T>
-concept IsStream = requires(T t)
+concept IsStream = requires(T t_)
 {
-	{t << "char array"};
-	{t << std::size_t{}};
-	{t << int{}};
-	{t << float{}};
-	{t << double{}};
+	{t_ << "char array"};
+	{t_ << std::size_t{}};
+	{t_ << int{}};
+	{t_ << float{}};
+	{t_ << double{}};
 };
 
 template <class T>
@@ -55,158 +55,158 @@ template <class T>
 concept IsPointer = std::is_pointer_v<T>;
 
 template <class T>
-concept IsStorage = requires(T obj)
+concept IsStorage = requires(T obj_)
 {
 	{
-		obj.data()
+		obj_.data()
 	} -> IsPointer;
 	{
-		obj.size()
+		obj_.size()
 	} -> std::convertible_to<PosIdx>;
 };
 
 template <typename T>
-using value_type_t = std::remove_pointer_t<std::decay_t<T>>;
+using ValueTypeT = std::remove_pointer_t<std::decay_t<T>>;
 
 template <class T>
-concept IsResizeableStorage = IsStorage<T> && requires(T obj)
+concept IsResizeableStorage = IsStorage<T> && requires(T obj_)
 {
-	{obj.reserve(std::declval<PosIdx>())};
-	{obj.push_back(std::declval<value_type_t<decltype(obj.data())>>())};
+	{obj_.reserve(std::declval<PosIdx>())};
+	{obj_.push_back(std::declval<ValueTypeT<decltype(obj_.data())>>())};
 };
 
 template <class T>
-concept IsResizeable = requires(T obj)
+concept IsResizeable = requires(T obj_)
 {
-	{obj.resize(std::declval<PosIdx>())};
+	{obj_.resize(std::declval<PosIdx>())};
 };
 
 template <class T>
 concept HasStorageType = IsStorage<typename T::DataArray>;
 
 template <class T>
-concept HasStorage = requires(T obj)
+concept HasStorage = requires(T obj_)
 {
 	{
-		obj.storage()
+		obj_.storage()
 	} -> IsStorage;
 };
 
 template <HasStorage Storage>
-using storage_leaf_t =
+using StorageLeafT =
 	std::remove_pointer_t<std::decay_t<decltype(std::declval<Storage>().storage().data())>>;
 
 template <class T>
-concept HasResizeableStorage = requires(T obj)
+concept HasResizeableStorage = requires(T obj_)
 {
 	{
-		obj.storage()
+		obj_.storage()
 	} -> IsResizeableStorage;
 };
 
 template <class T>
-concept HasSpanStorage = requires(T obj)
+concept HasSpanStorage = requires(T obj_)
 {
 	{
-		obj.storage().subspan(std::declval<std::size_t>(), std::declval<std::size_t>())
-	} -> std::same_as<std::span<typename std::decay_t<decltype(obj.storage())>::value_type>>;
+		obj_.storage().subspan(std::declval<std::size_t>(), std::declval<std::size_t>())
+	} -> std::same_as<std::span<typename std::decay_t<decltype(obj_.storage())>::value_type>>;
 };
 
 template <class T>
-concept HasBytes = requires(T obj)
+concept HasBytes = requires(T obj_)
 {
 	{
-		obj.bytes()
+		obj_.bytes()
 	} -> std::same_as<std::span<std::byte>>;
 };
 
 template <class T>
-concept HasStream = requires(T t)
+concept HasStream = requires(T t_)
 {
 	{
-		t.has_stream()
+		t_.has_stream()
 	} -> std::convertible_to<bool>;
 	{
-		t.get_stream()
+		t_.get_stream()
 	} -> IsStream;
 };
 
 template <class T>
-concept HasLog = requires(T t)
+concept HasLog = requires(T t_)
 {
 	{
-		t.log()
+		t_.log()
 	} -> std::convertible_to<bool>;
 };
 
 template <class T>
-concept HasAbort = requires(T t)
+concept HasAbort = requires(T t_)
 {
-	{t.abort()};
+	{t_.abort()};
 };
 
 template <class T>
-concept IsContext = requires(T t)
+concept IsContext = requires(T t_)
 {
-	requires HasLog<decltype(t.logger())>;
-	requires HasAbort<decltype(t.aborter())>;
+	requires HasLog<decltype(t_.logger())>;
+	requires HasAbort<decltype(t_.aborter())>;
 };
 
 template <class T>
-concept HasSize = requires(T t)
+concept HasSize = requires(T t_)
 {
 	typename T::VecDi;
 	{
-		t.size()
+		t_.size()
 	} -> std::convertible_to<typename T::VecDi>;
 	{
-		t.offset()
+		t_.offset()
 	} -> std::convertible_to<typename T::VecDi>;
 	{
-		t.index(std::declval<typename T::VecDi>())
+		t_.index(std::declval<typename T::VecDi>())
 	} -> std::convertible_to<PosIdx>;
 	{
-		t.index(std::declval<PosIdx>())
+		t_.index(std::declval<PosIdx>())
 	} -> std::convertible_to<typename T::VecDi>;
 };
 
 template <class T>
-concept HasSizeCheck = HasSize<T> && requires(T t)
+concept HasSizeCheck = HasSize<T> && requires(T t_)
 {
 	{
-		t.inside(std::declval<typename T::VecDi>())
+		t_.inside(std::declval<typename T::VecDi>())
 	} -> std::convertible_to<bool>;
 };
 
 template <class T>
-concept HasResize = requires(T t)
+concept HasResize = requires(T t_)
 {
 	typename T::VecDi;
-	{t.resize(std::declval<typename T::VecDi>(), std::declval<typename T::VecDi>())};
+	{t_.resize(std::declval<typename T::VecDi>(), std::declval<typename T::VecDi>())};
 };
 
 template <class T, Dim D>
-concept HasAssertBounds = requires(T t)
+concept HasAssertBounds = requires(T t_)
 {
-	{t.assert_pos_bounds(std::declval<PosIdx>(), std::declval<const char *>())};
+	{t_.assert_pos_bounds(std::declval<PosIdx>(), std::declval<const char *>())};
 
-	{t.assert_pos_idx_bounds(std::declval<VecDi<D>>(), std::declval<const char *>())};
+	{t_.assert_pos_idx_bounds(std::declval<VecDi<D>>(), std::declval<const char *>())};
 
-	{t.assert_pos_bounds(std::declval<VecDi<D>>(), std::declval<const char *>())};
+	{t_.assert_pos_bounds(std::declval<VecDi<D>>(), std::declval<const char *>())};
 
-	{t.assert_pos_idx_bounds(std::declval<PosIdx>(), std::declval<const char *>())};
+	{t_.assert_pos_idx_bounds(std::declval<PosIdx>(), std::declval<const char *>())};
 };
 
 template <class T>
-concept HasReadAccess = requires(T t)
+concept HasReadAccess = requires(T t_)
 {
 	typename T::VecDi;
 	typename T::Leaf;
 	{
-		t.get(std::declval<typename T::VecDi>())
+		t_.get(std::declval<typename T::VecDi>())
 	} -> std::convertible_to<const typename T::Leaf &>;
 	{
-		t.get(std::declval<PosIdx>())
+		t_.get(std::declval<PosIdx>())
 	} -> std::convertible_to<const typename T::Leaf &>;
 };
 template <class T>
@@ -223,23 +223,23 @@ concept IsGridOfSpanGrids = IsGrid<T> && requires
 };
 
 template <class T>
-concept HasChildrenSize = requires(T t)
+concept HasChildrenSize = requires(T t_)
 {
 	typename T::VecDi;
 	{
-		t.num_elems_per_child()
+		t_.num_elems_per_child()
 	} -> std::same_as<PosIdx>;
 	{
-		t.num_children()
+		t_.num_children()
 	} -> std::same_as<PosIdx>;
 };
 
 template <typename T, Dim D>
-void format_pos(IsStream auto & stream, VecDT<T, D> const & pos)
+void format_pos(IsStream auto & stream_, VecDT<T, D> const & pos_)
 {
-	stream << "(" << pos(0);
-	for (Dim axis = 1; axis < pos.size(); ++axis) stream << ", " << pos(axis);
-	stream << ")";
+	stream_ << "(" << pos_(0);
+	for (Dim axis = 1; axis < pos_.size(); ++axis) stream_ << ", " << pos_(axis);
+	stream_ << ")";
 }
 
 template <HasLog Logger, HasAbort Aborter>
@@ -248,13 +248,13 @@ struct Context
 	Logger m_logger_impl;
 	Aborter m_aborter_impl;
 
-	auto & logger(this auto & self)
+	auto & logger(this auto & self_)
 	{
-		return self.m_logger_impl;
+		return self_.m_logger_impl;
 	}
-	auto & aborter(this auto & self)
+	auto & aborter(this auto & self_)
 	{
-		return self.m_aborter_impl;
+		return self_.m_aborter_impl;
 	}
 };
 
@@ -432,7 +432,7 @@ struct AssertBounds
 		if (!m_size_impl.get().inside(pos_))
 		{
 			typename Size::VecDi max_extent = m_size_impl.get().offset() + m_size_impl.get().size();
-			m_context_impl.get().logger().log(
+		m_context_impl.get().logger().log(
 				"AssertionError: ",
 				title_,
 				" assert_pos_bounds",
@@ -448,26 +448,26 @@ struct AssertBounds
 		return true;
 	}
 
-	bool assert_pos_idx_bounds(const PosIdx pos_idx, const char * title) const
+	bool assert_pos_idx_bounds(const PosIdx pos_idx_, const char * title_) const
 	{
-		if (pos_idx >= m_storage_impl.get().storage().size())
+		if (pos_idx_ >= m_storage_impl.get().storage().size())
 		{
 			VecDi pos;
 			if (m_storage_impl.get().storage().size() > 0)
 			{
-				pos = m_size_impl.get().index(pos_idx);
+				pos = m_size_impl.get().index(pos_idx_);
 			}
 			else
 			{
-				constexpr auto nan = std::numeric_limits<typename VecDi::Scalar>::quiet_NaN();
-				pos = VecDi::Constant(nan);
+				constexpr auto k_nan = std::numeric_limits<typename VecDi::Scalar>::quiet_NaN();
+				pos = VecDi::Constant(k_nan);
 			}
 
 			m_context_impl.get().logger().log(
 				"AssertionError: ",
-				title,
+				title_,
 				" assert_pos_idx_bounds(",
-				pos_idx,
+				pos_idx_,
 				") i.e. ",
 				pos,
 				" is greater than extent ",
@@ -701,7 +701,7 @@ struct AccessByValue
 template <HasStorage Storage>
 struct StorageBytes
 {
-	using Leaf = storage_leaf_t<Storage>;
+	using Leaf = StorageLeafT<Storage>;
 
 	std::reference_wrapper<Storage> m_storage_impl;
 
@@ -846,15 +846,15 @@ struct ChildrenSize
 
 	template <IsGridOfSpanGrids Children>
 	[[nodiscard]] constexpr Children make_children_span(
-		IsContext auto & context,
-		HasResizeableStorage auto & storage_impl,
+		IsContext auto & context_,
+		HasResizeableStorage auto & storage_impl_,
 		IsSpanGrid auto background_) const
 	{
-		storage_impl.storage().resize(m_num_elems_per_child * m_num_children);
-		std::span const parent_data{storage_impl.storage()};
+		storage_impl_.storage().resize(m_num_elems_per_child * m_num_children);
+		std::span const parent_data{storage_impl_.storage()};
 
 		Children children{
-			context, m_children_size, m_size_impl.get().offset(), std::move(background_)};
+			context_, m_children_size, m_size_impl.get().offset(), std::move(background_)};
 
 		// Set each child sub-grid's size and offset.
 		for (PosIdx pos_child_idx = 0; pos_child_idx < children.storage().size(); pos_child_idx++)
@@ -929,7 +929,7 @@ struct ChildrenSize
 struct Log
 {
 	template <std::size_t num_args>
-	static constexpr std::array<char, num_args * 2> template_buff = [] consteval
+	static constexpr std::array<char, num_args * 2> k_template_buff = [] consteval
 	{
 		std::string tmplt;
 		for (std::size_t arg_idx = 0; arg_idx < num_args; ++arg_idx)
@@ -942,20 +942,20 @@ struct Log
 	}();
 
 	template <std::size_t num_args>
-	static constexpr std::string_view template_string{
-		template_buff<num_args>.data(), template_buff<num_args>.size()};
+	static constexpr std::string_view k_template_string{
+		k_template_buff<num_args>.data(), k_template_buff<num_args>.size()};
 
 	template <typename... Args>
-	bool log(Args &&... args) const noexcept
+	bool log(Args &&... args_) const noexcept
 	{
-		fmt::print(template_string<sizeof...(Args)>, std::forward<Args>(args)...);
+		fmt::print(k_template_string<sizeof...(Args)>, std::forward<Args>(args_)...);
 		return true;
 	}
 };
 
 struct Aborter
 {
-	void abort() const noexcept
+	static void abort() noexcept
 	{
 		std::abort();
 	}

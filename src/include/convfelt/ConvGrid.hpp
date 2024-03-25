@@ -1,19 +1,17 @@
 #pragma once
 #include <cassert>
-#include <concepts>
-#include <span>
+#include <cstddef>
+#include <cstdint>
+#include <functional>
+#include <type_traits>
 
 #include <sycl/sycl.hpp>
-
-#include "assert_compat.hpp"
 
 #include "felt2/typedefs.hpp"
 
 #include "felt2/components/core.hpp"
 #include "felt2/components/eigen.hpp"
 #include "felt2/components/sycl.hpp"
-
-#include "iter.hpp"
 
 /**
  * This header contains the grid structures used by ConvFelt.
@@ -48,7 +46,7 @@ struct GridFlag
 };
 
 template <GridFlags flags>
-using host_or_device_context_t = std::conditional_t<
+using HostOrDeviceContextT = std::conditional_t<
 	static_cast<bool>(flags & GridFlag::is_device_shared),
 	// device grid
 	felt2::components::device::
@@ -57,13 +55,14 @@ using host_or_device_context_t = std::conditional_t<
 	felt2::components::Context<felt2::components::Log, felt2::components::Aborter>>;
 
 template <class T, GridFlags flags>
-using ref_if_child_t =
+using RefIfChildT =
 	std::conditional_t<static_cast<bool>(flags & GridFlag::is_child), std::reference_wrapper<T>, T>;
 
-constexpr decltype(auto) unwrap_ref(auto && maybe_wrapped)
+constexpr decltype(auto) unwrap_ref(auto && maybe_wrapped_)
 {
 	return static_cast<std::add_lvalue_reference_t<
-		std::unwrap_reference_t<std::remove_reference_t<decltype(maybe_wrapped)>>>>(maybe_wrapped);
+		std::unwrap_reference_t<std::remove_reference_t<decltype(maybe_wrapped_)>>>>(
+		maybe_wrapped_);
 }
 
 auto make_host_context()
@@ -71,15 +70,15 @@ auto make_host_context()
 	return felt2::components::Context{felt2::components::Log{}, felt2::components::Aborter{}};
 }
 
-auto make_device_context(sycl::device const & dev, sycl::context const & ctx)
+auto make_device_context(sycl::device const & dev_, sycl::context const & ctx_)
 {
 	return felt2::components::device::Context{
-		felt2::components::device::Log{}, felt2::components::device::Aborter{}, dev, ctx};
+		felt2::components::device::Log{}, felt2::components::device::Aborter{}, dev_, ctx_};
 }
 
-auto make_device_context(sycl::queue const & queue)
+auto make_device_context(sycl::queue const & queue_)
 {
-	return make_device_context(queue.get_device(), queue.get_context());
+	return make_device_context(queue_.get_device(), queue_.get_context());
 }
 
 class USMMatrix
@@ -94,37 +93,37 @@ class USMMatrix
 
 public:
 	USMMatrix(
-		felt2::Dim const rows,
-		felt2::Dim const cols,
-		sycl::device const & dev,
-		sycl::context const & ctx)
-		: m_storage_impl{static_cast<std::size_t>(rows * cols), dev, ctx},
+		felt2::Dim const rows_,
+		felt2::Dim const cols_,
+		sycl::device const & dev_,
+		sycl::context const & ctx_)
+		: m_storage_impl{static_cast<std::size_t>(rows_ * cols_), dev_, ctx_},
 		  m_bytes_impl{m_storage_impl},
-		  m_matrix_impl{rows, cols, m_storage_impl}
+		  m_matrix_impl{rows_, cols_, m_storage_impl}
 	{
 	}
 
-	[[nodiscard]] decltype(auto) matrix(auto &&... args) noexcept
+	[[nodiscard]] decltype(auto) matrix(auto &&... args_) noexcept
 	{
-		return m_matrix_impl.matrix(std::forward<decltype(args)>(args)...);
+		return m_matrix_impl.matrix(std::forward<decltype(args_)>(args_)...);
 	}
 
-	[[nodiscard]] decltype(auto) matrix(auto &&... args) const noexcept
+	[[nodiscard]] decltype(auto) matrix(auto &&... args_) const noexcept
 	{
-		return m_matrix_impl.matrix(std::forward<decltype(args)>(args)...);
+		return m_matrix_impl.matrix(std::forward<decltype(args_)>(args_)...);
 	}
 
-	[[nodiscard]] decltype(auto) bytes(auto &&... args) noexcept
+	[[nodiscard]] decltype(auto) bytes(auto &&... args_) noexcept
 	{
-		return m_bytes_impl.bytes(std::forward<decltype(args)>(args)...);
+		return m_bytes_impl.bytes(std::forward<decltype(args_)>(args_)...);
 	}
 
-	[[nodiscard]] decltype(auto) bytes(auto &&... args) const noexcept
+	[[nodiscard]] decltype(auto) bytes(auto &&... args_) const noexcept
 	{
-		return m_bytes_impl.bytes(std::forward<decltype(args)>(args)...);
+		return m_bytes_impl.bytes(std::forward<decltype(args_)>(args_)...);
 	}
 
-	operator MatrixImpl::Matrix()
+	explicit operator MatrixImpl::Matrix()
 	{  // NOLINT(*-explicit-constructor)
 		return m_matrix_impl.matrix();
 	}
@@ -140,7 +139,7 @@ class ByValue
 {
 public:
 	using This = ByValue<T, D, flags>;
-	static constexpr bool is_device_shared = flags & GridFlag::is_device_shared;
+	static constexpr bool k_is_device_shared = (flags & GridFlag::is_device_shared) != 0;
 
 	struct Traits
 	{
@@ -151,10 +150,10 @@ public:
 	using VecDi = felt2::VecDi<Traits::k_dims>;
 	using Leaf = typename Traits::Leaf;
 
-	using ContextImpl = host_or_device_context_t<flags>;
+	using ContextImpl = HostOrDeviceContextT<flags>;
 	using SizeImpl = felt2::components::Size<Traits>;
 	using StorageImpl = std::conditional_t<
-		is_device_shared,
+		k_is_device_shared,
 		felt2::components::device::USMResizeableArray<Traits>,
 		felt2::components::DataArray<Traits>>;
 	using AssertBoundsImpl =
@@ -165,7 +164,7 @@ public:
 	using MatrixImpl = felt2::components::EigenMap<Traits, StorageImpl>;
 
 private:
-	ref_if_child_t<ContextImpl, flags> m_context_impl;
+	RefIfChildT<ContextImpl, flags> m_context_impl;
 	SizeImpl const m_size_impl;
 	StorageImpl m_storage_impl;
 	ActivateImpl m_activate_impl;
@@ -176,13 +175,13 @@ private:
 public:
 	ByValue(
 		decltype(m_context_impl) context_,
-		const VecDi & size,
-		const VecDi & offset,
-		Leaf background) requires(is_device_shared)
+		const VecDi & size_,
+		const VecDi & offset_,
+		Leaf background_) requires(k_is_device_shared)
 		: m_context_impl{std::move(context_)},
-		  m_size_impl{size, offset},
+		  m_size_impl{size_, offset_},
 		  m_storage_impl{{context().context(), context().device()}},
-		  m_activate_impl{m_context_impl, m_size_impl, m_storage_impl, std::move(background)}
+		  m_activate_impl{m_context_impl, m_size_impl, m_storage_impl, std::move(background_)}
 	{
 		m_activate_impl.activate();
 	}
@@ -191,7 +190,7 @@ public:
 		decltype(m_context_impl) context_,
 		const VecDi & size_,
 		const VecDi & offset_,
-		Leaf background_) requires(!is_device_shared)
+		Leaf background_) requires(!k_is_device_shared)
 		: m_context_impl{std::move(context_)},
 		  m_size_impl{size_, offset_},
 		  m_storage_impl{},
@@ -201,71 +200,71 @@ public:
 	}
 
 	// Note: if/when copying is required, cannot default due to reference copying.
-	ByValue(This const & other) noexcept = delete;
+	ByValue(This const & other_) noexcept = delete;
 
-	ByValue(This && other) noexcept = default;
+	ByValue(This && other_) noexcept = default;
 
 	~ByValue() = default;
 
-	This & operator=(This && other) noexcept = default;
-	This & operator=(This const & other) = delete;
+	This & operator=(This && other_) noexcept = default;
+	This & operator=(This const & other_) = delete;
 
-	auto & context(this auto & self) noexcept
+	auto & context(this auto & self_) noexcept
 	{
-		return unwrap_ref(self.m_context_impl);
+		return unwrap_ref(self_.m_context_impl);
 	}
 
-	decltype(auto) storage(auto &&... args) noexcept
+	decltype(auto) storage(auto &&... args_) noexcept
 	{
-		return m_storage_impl.storage(std::forward<decltype(args)>(args)...);
+		return m_storage_impl.storage(std::forward<decltype(args_)>(args_)...);
 	}
-	decltype(auto) storage(auto &&... args) const noexcept
+	decltype(auto) storage(auto &&... args_) const noexcept
 	{
-		return m_storage_impl.storage(std::forward<decltype(args)>(args)...);
+		return m_storage_impl.storage(std::forward<decltype(args_)>(args_)...);
 	}
-	decltype(auto) index(auto &&... args) const noexcept
+	decltype(auto) index(auto &&... args_) const noexcept
 	{
-		return m_size_impl.index(std::forward<decltype(args)>(args)...);
+		return m_size_impl.index(std::forward<decltype(args_)>(args_)...);
 	}
-	decltype(auto) get(VecDi const & pos) noexcept
+	decltype(auto) get(VecDi const & pos_) noexcept
 	{
-		return m_access_impl.get(pos);
+		return m_access_impl.get(pos_);
 	}
-	decltype(auto) get(VecDi const & pos) const noexcept
+	decltype(auto) get(VecDi const & pos_) const noexcept
 	{
-		return m_access_impl.get(pos);
+		return m_access_impl.get(pos_);
 	}
-	decltype(auto) get(auto &&... args) noexcept
+	decltype(auto) get(auto &&... args_) noexcept
 	{
-		return m_access_impl.get(std::forward<decltype(args)>(args)...);
+		return m_access_impl.get(std::forward<decltype(args_)>(args_)...);
 	}
-	decltype(auto) get(auto &&... args) const noexcept
+	decltype(auto) get(auto &&... args_) const noexcept
 	{
-		return m_access_impl.get(std::forward<decltype(args)>(args)...);
+		return m_access_impl.get(std::forward<decltype(args_)>(args_)...);
 	}
-	decltype(auto) set(auto &&... args) noexcept
+	decltype(auto) set(auto &&... args_) noexcept
 	{
-		return m_access_impl.set(std::forward<decltype(args)>(args)...);
+		return m_access_impl.set(std::forward<decltype(args_)>(args_)...);
 	}
-	decltype(auto) offset(auto &&... args) const noexcept
+	decltype(auto) offset(auto &&... args_) const noexcept
 	{
-		return m_size_impl.offset(std::forward<decltype(args)>(args)...);
+		return m_size_impl.offset(std::forward<decltype(args_)>(args_)...);
 	}
-	decltype(auto) size(auto &&... args) const noexcept
+	decltype(auto) size(auto &&... args_) const noexcept
 	{
-		return m_size_impl.size(std::forward<decltype(args)>(args)...);
+		return m_size_impl.size(std::forward<decltype(args_)>(args_)...);
 	}
-	decltype(auto) inside(auto &&... args) const noexcept
+	decltype(auto) inside(auto &&... args_) const noexcept
 	{
-		return m_size_impl.inside(std::forward<decltype(args)>(args)...);
+		return m_size_impl.inside(std::forward<decltype(args_)>(args_)...);
 	}
-	decltype(auto) array(auto &&... args) const noexcept
+	decltype(auto) array(auto &&... args_) const noexcept
 	{
-		return m_matrix_impl.array(std::forward<decltype(args)>(args)...);
+		return m_matrix_impl.array(std::forward<decltype(args_)>(args_)...);
 	}
-	decltype(auto) matrix(auto &&... args) const noexcept
+	decltype(auto) matrix(auto &&... args_) const noexcept
 	{
-		return m_matrix_impl.matrix(std::forward<decltype(args)>(args)...);
+		return m_matrix_impl.matrix(std::forward<decltype(args_)>(args_)...);
 	}
 };
 
@@ -278,7 +277,7 @@ class ByRef
 {
 public:
 	using This = ByRef<T, D, flags>;
-	static constexpr bool is_device_shared = flags & GridFlag::is_device_shared;
+	static constexpr bool k_is_device_shared = (flags & GridFlag::is_device_shared) != 0;
 
 	struct Traits
 	{
@@ -291,10 +290,10 @@ public:
 
 	using SizeImpl = felt2::components::Size<Traits>;
 	using StorageImpl = std::conditional_t<
-		is_device_shared,
+		k_is_device_shared,
 		felt2::components::device::USMResizeableArray<Traits>,
 		felt2::components::DataArray<Traits>>;
-	using ContextImpl = host_or_device_context_t<flags>;
+	using ContextImpl = HostOrDeviceContextT<flags>;
 	using AssertBoundsImpl =
 		felt2::components::AssertBounds<Traits, ContextImpl, SizeImpl, StorageImpl>;
 	using AccessImpl =
@@ -302,7 +301,7 @@ public:
 	using ActivateImpl = felt2::components::Activate<Traits, ContextImpl, SizeImpl, StorageImpl>;
 
 private:
-	ref_if_child_t<ContextImpl, flags> m_context_impl;
+	RefIfChildT<ContextImpl, flags> m_context_impl;
 	SizeImpl m_size_impl;
 	StorageImpl m_storage_impl;
 	ActivateImpl m_activate_impl;
@@ -314,7 +313,7 @@ public:
 		decltype(m_context_impl) context_,
 		VecDi const & size_,
 		VecDi const & offset_,
-		Leaf background_) requires(is_device_shared)
+		Leaf background_) requires(k_is_device_shared)
 		: m_context_impl{std::move(context_)},
 		  m_size_impl{size_, offset_},
 		  m_storage_impl{{context().context(), context().device()}},
@@ -327,7 +326,7 @@ public:
 		decltype(m_context_impl) context_,
 		VecDi const & size_,
 		VecDi const & offset_,
-		Leaf background_) requires(!is_device_shared)
+		Leaf background_) requires(!k_is_device_shared)
 		: m_context_impl{std::move(context_)},
 		  m_size_impl{size_, offset_},
 		  m_storage_impl{},
@@ -343,54 +342,54 @@ public:
 //		  m_activate_impl{
 //			  m_context_impl, m_size_impl, m_storage_impl, other.m_activate_impl.m_background} {};
 
-	ByRef(This && other) noexcept = default;
+	ByRef(This && other_) noexcept = default;
 
-	ByRef(This const& other) noexcept = delete;
+	ByRef(This const & other_) noexcept = delete;
 
 	~ByRef() = default;
 
-	This & operator=(This && other) noexcept = default;
-	This & operator=(This const & other) = delete;
+	This & operator=(This && other_) noexcept = default;
+	This & operator=(This const & other_) = delete;
 
-	auto & context(this auto & self) noexcept
+	auto & context(this auto & self_) noexcept
 	{
-		return unwrap_ref(self.m_context_impl);
+		return unwrap_ref(self_.m_context_impl);
 	}
-	decltype(auto) storage(auto &&... args) noexcept
+	decltype(auto) storage(auto &&... args_) noexcept
 	{
-		return m_storage_impl.storage(std::forward<decltype(args)>(args)...);
+		return m_storage_impl.storage(std::forward<decltype(args_)>(args_)...);
 	}
-	decltype(auto) storage(auto &&... args) const noexcept
+	decltype(auto) storage(auto &&... args_) const noexcept
 	{
-		return m_storage_impl.storage(std::forward<decltype(args)>(args)...);
+		return m_storage_impl.storage(std::forward<decltype(args_)>(args_)...);
 	}
-	decltype(auto) index(auto &&... args) const noexcept
+	decltype(auto) index(auto &&... args_) const noexcept
 	{
-		return m_size_impl.index(std::forward<decltype(args)>(args)...);
+		return m_size_impl.index(std::forward<decltype(args_)>(args_)...);
 	}
-	decltype(auto) get(VecDi const & pos) noexcept
+	decltype(auto) get(VecDi const & pos_) noexcept
 	{
-		return m_access_impl.get(pos);
+		return m_access_impl.get(pos_);
 	}
-	decltype(auto) get(VecDi const & pos) const noexcept
+	decltype(auto) get(VecDi const & pos_) const noexcept
 	{
-		return m_access_impl.get(pos);
+		return m_access_impl.get(pos_);
 	}
-	decltype(auto) get(auto &&... args) noexcept
+	decltype(auto) get(auto &&... args_) noexcept
 	{
-		return m_access_impl.get(std::forward<decltype(args)>(args)...);
+		return m_access_impl.get(std::forward<decltype(args_)>(args_)...);
 	}
-	decltype(auto) get(auto &&... args) const noexcept
+	decltype(auto) get(auto &&... args_) const noexcept
 	{
-		return m_access_impl.get(std::forward<decltype(args)>(args)...);
+		return m_access_impl.get(std::forward<decltype(args_)>(args_)...);
 	}
-	decltype(auto) offset(auto &&... args) const noexcept
+	decltype(auto) offset(auto &&... args_) const noexcept
 	{
-		return m_size_impl.offset(std::forward<decltype(args)>(args)...);
+		return m_size_impl.offset(std::forward<decltype(args_)>(args_)...);
 	}
-	decltype(auto) size(auto &&... args) const noexcept
+	decltype(auto) size(auto &&... args_) const noexcept
 	{
-		return m_size_impl.size(std::forward<decltype(args)>(args)...);
+		return m_size_impl.size(std::forward<decltype(args_)>(args_)...);
 	}
 };
 
@@ -411,7 +410,7 @@ public:
 
 	using SizeImpl = felt2::components::ResizableSize<Traits>;
 	using StorageImpl = felt2::components::DataArraySpan<Traits>;
-	using ContextImpl = host_or_device_context_t<flags>;
+	using ContextImpl = HostOrDeviceContextT<flags>;
 	using AssertBoundsImpl =
 		felt2::components::AssertBounds<Traits, ContextImpl, SizeImpl, StorageImpl>;
 	using AccessImpl =
@@ -419,7 +418,7 @@ public:
 	using MatrixImpl = felt2::components::EigenMap<Traits, StorageImpl>;
 
 private:
-	ref_if_child_t<ContextImpl, flags> m_context_impl;
+	RefIfChildT<ContextImpl, flags> m_context_impl;
 	SizeImpl m_size_impl;
 	StorageImpl m_storage_impl{};
 	AssertBoundsImpl m_assert_bounds_impl{m_context_impl, m_size_impl, m_storage_impl};
@@ -427,93 +426,93 @@ private:
 	MatrixImpl m_matrix_impl{m_storage_impl};
 
 public:
-	FilterTD(decltype(m_context_impl) context_, SizeImpl size_impl)
-		: m_context_impl{std::move(context_)}, m_size_impl{std::move(size_impl)}
+	FilterTD(decltype(m_context_impl) context_, SizeImpl size_impl_)
+		: m_context_impl{std::move(context_)}, m_size_impl{std::move(size_impl_)}
 	{
 	}
 
 	// Note: reference semantics mean we can't blindly copy `other` - reference_wrappers for e.g.
 	// storage would still point to the original instance.
-	FilterTD(This const & other) noexcept
-		: m_context_impl{other.m_context_impl},
-		  m_size_impl{other.m_size_impl},
-		  m_storage_impl{other.m_storage_impl},
+	FilterTD(This const & other_) noexcept
+		: m_context_impl{other_.m_context_impl},
+		  m_size_impl{other_.m_size_impl},
+		  m_storage_impl{other_.m_storage_impl},
 		  m_assert_bounds_impl{m_context_impl, m_size_impl, m_storage_impl},
 		  m_access_impl{m_size_impl, m_storage_impl, m_assert_bounds_impl},
 		  m_matrix_impl{m_storage_impl}
 	{
 	}
 
-	FilterTD(This && other) noexcept = default;
+	FilterTD(This && other_) noexcept = default;
 
 	~FilterTD() = default;
 
-	This & operator=(This && other) noexcept = default;
-	This & operator=(This const & other) = delete;
+	This & operator=(This && other_) noexcept = default;
+	This & operator=(This const & other_) = delete;
 
-	decltype(auto) storage(auto &&... args) noexcept
+	decltype(auto) storage(auto &&... args_) noexcept
 	{
-		return m_storage_impl.storage(std::forward<decltype(args)>(args)...);
+		return m_storage_impl.storage(std::forward<decltype(args_)>(args_)...);
 	}
-	decltype(auto) storage(auto &&... args) const noexcept
+	decltype(auto) storage(auto &&... args_) const noexcept
 	{
-		return m_storage_impl.storage(std::forward<decltype(args)>(args)...);
+		return m_storage_impl.storage(std::forward<decltype(args_)>(args_)...);
 	}
-	decltype(auto) index(auto &&... args) const noexcept
+	decltype(auto) index(auto &&... args_) const noexcept
 	{
-		return m_size_impl.index(std::forward<decltype(args)>(args)...);
+		return m_size_impl.index(std::forward<decltype(args_)>(args_)...);
 	}
-	decltype(auto) get(VecDi const & pos) noexcept
+	decltype(auto) get(VecDi const & pos_) noexcept
 	{
-		return m_access_impl.get(pos);
+		return m_access_impl.get(pos_);
 	}
-	decltype(auto) get(VecDi const & pos) const noexcept
+	decltype(auto) get(VecDi const & pos_) const noexcept
 	{
-		return m_access_impl.get(pos);
+		return m_access_impl.get(pos_);
 	}
-	decltype(auto) get(auto &&... args) noexcept
+	decltype(auto) get(auto &&... args_) noexcept
 	{
-		return m_access_impl.get(std::forward<decltype(args)>(args)...);
+		return m_access_impl.get(std::forward<decltype(args_)>(args_)...);
 	}
-	decltype(auto) get(auto &&... args) const noexcept
+	decltype(auto) get(auto &&... args_) const noexcept
 	{
-		return m_access_impl.get(std::forward<decltype(args)>(args)...);
+		return m_access_impl.get(std::forward<decltype(args_)>(args_)...);
 	}
-	decltype(auto) set(auto &&... args) const noexcept
+	decltype(auto) set(auto &&... args_) const noexcept
 	{
-		return m_access_impl.set(std::forward<decltype(args)>(args)...);
+		return m_access_impl.set(std::forward<decltype(args_)>(args_)...);
 	}
-	decltype(auto) offset(auto &&... args) const noexcept
+	decltype(auto) offset(auto &&... args_) const noexcept
 	{
-		return m_size_impl.offset(std::forward<decltype(args)>(args)...);
+		return m_size_impl.offset(std::forward<decltype(args_)>(args_)...);
 	}
-	decltype(auto) size(auto &&... args) const noexcept
+	decltype(auto) size(auto &&... args_) const noexcept
 	{
-		return m_size_impl.size(std::forward<decltype(args)>(args)...);
+		return m_size_impl.size(std::forward<decltype(args_)>(args_)...);
 	}
-	decltype(auto) resize(auto &&... args) noexcept
+	decltype(auto) resize(auto &&... args_) noexcept
 	{
-		return m_size_impl.resize(std::forward<decltype(args)>(args)...);
+		return m_size_impl.resize(std::forward<decltype(args_)>(args_)...);
 	}
-	decltype(auto) inside(auto &&... args) const noexcept
+	decltype(auto) inside(auto &&... args_) const noexcept
 	{
-		return m_size_impl.inside(std::forward<decltype(args)>(args)...);
+		return m_size_impl.inside(std::forward<decltype(args_)>(args_)...);
 	}
-	decltype(auto) array(auto &&... args) const noexcept
+	decltype(auto) array(auto &&... args_) const noexcept
 	{
-		return m_matrix_impl.array(std::forward<decltype(args)>(args)...);
+		return m_matrix_impl.array(std::forward<decltype(args_)>(args_)...);
 	}
-	decltype(auto) matrix(auto &&... args) const noexcept
+	decltype(auto) matrix(auto &&... args_) const noexcept
 	{
-		return m_matrix_impl.matrix(std::forward<decltype(args)>(args)...);
+		return m_matrix_impl.matrix(std::forward<decltype(args_)>(args_)...);
 	}
-	decltype(auto) assert_pos_bounds(auto &&... args) const noexcept
+	decltype(auto) assert_pos_bounds(auto &&... args_) const noexcept
 	{
-		return m_assert_bounds_impl.assert_pos_bounds(std::forward<decltype(args)>(args)...);
+		return m_assert_bounds_impl.assert_pos_bounds(std::forward<decltype(args_)>(args_)...);
 	}
-	decltype(auto) assert_pos_idx_bounds(auto &&... args) const noexcept
+	decltype(auto) assert_pos_idx_bounds(auto &&... args_) const noexcept
 	{
-		return m_assert_bounds_impl.assert_pos_idx_bounds(std::forward<decltype(args)>(args)...);
+		return m_assert_bounds_impl.assert_pos_idx_bounds(std::forward<decltype(args_)>(args_)...);
 	}
 };
 
@@ -524,7 +523,7 @@ class ConvGridTD
 {
 public:
 	using This = ConvGridTD<T, D, flags>;
-	static constexpr bool is_device_shared = flags & GridFlag::is_device_shared;
+	static constexpr bool k_is_device_shared = (flags & GridFlag::is_device_shared) != 0;
 
 	struct Traits
 	{
@@ -537,11 +536,11 @@ public:
 	using Child = FilterTD<Leaf, Traits::k_dims, flags | GridFlag::is_child>;
 	using ChildrenGrid = ByRef<Child, Traits::k_dims, flags | GridFlag::is_child>;
 
-	using ContextImpl = host_or_device_context_t<flags>;
+	using ContextImpl = HostOrDeviceContextT<flags>;
 	using SizeImpl = felt2::components::Size<Traits>;
 	using ChildrenSizeImpl = felt2::components::ChildrenSize<Traits, SizeImpl>;
 	using StorageImpl = std::conditional_t<
-		is_device_shared,
+		k_is_device_shared,
 		felt2::components::device::USMResizeableArray<Traits>,
 		felt2::components::DataArray<Traits>>;
 	using BytesImpl = felt2::components::StorageBytes<StorageImpl>;
@@ -550,7 +549,7 @@ public:
 	using MatrixImpl = felt2::components::MatrixColPerChild<Traits, StorageImpl, ChildrenSizeImpl>;
 
 private:
-	ref_if_child_t<ContextImpl, flags> m_context_impl;
+	RefIfChildT<ContextImpl, flags> m_context_impl;
 	StorageImpl m_storage_impl;
 	SizeImpl const m_size_impl;
 	ChildrenSizeImpl const m_children_size_impl;
@@ -580,7 +579,7 @@ public:
 	ConvGridTD(
 		decltype(m_context_impl) context_,
 		VecDi const & size_,
-		felt2::VecDi<D - 1> const & child_window_) requires(is_device_shared)
+		felt2::VecDi<D - 1> const & child_window_) requires(k_is_device_shared)
 		: m_context_impl{std::move(context_)},
 		  m_storage_impl{{context().context(), context().device()}},
 		  m_size_impl{size_, {0, 0, 0}},
@@ -597,7 +596,7 @@ public:
 		decltype(m_context_impl) context_,
 		VecDi const & size_,
 		VecDi const & child_size_,
-		VecDi const & offset_) requires(!is_device_shared)
+		VecDi const & offset_) requires(!k_is_device_shared)
 		: m_context_impl{std::move(context_)},
 		  m_size_impl{size_, offset_},
 		  m_children_size_impl{m_size_impl, child_size_},
@@ -610,18 +609,18 @@ public:
 	}
 
 	// Note: if/when copying is required, cannot default due to reference copying.
-	ConvGridTD(This const & other) noexcept = delete;
+	ConvGridTD(This const & other_) noexcept = delete;
 
-	ConvGridTD(This && other) noexcept = default;
+	ConvGridTD(This && other_) noexcept = default;
 
 	~ConvGridTD() = default;
 
-	This & operator=(This && other) noexcept = default;
-	This & operator=(This const & other) = delete;
+	This & operator=(This && other_) noexcept = default;
+	This & operator=(This const & other_) = delete;
 
-	auto & context(this auto & self) noexcept
+	auto & context(this auto & self_) noexcept
 	{
-		return unwrap_ref(self.m_context_impl);
+		return unwrap_ref(self_.m_context_impl);
 	}
 
 	const ChildrenGrid & children() const noexcept
@@ -634,45 +633,45 @@ public:
 		return m_children;
 	}
 
-	decltype(auto) storage(auto &&... args) noexcept
+	decltype(auto) storage(auto &&... args_) noexcept
 	{
-		return m_storage_impl.storage(std::forward<decltype(args)>(args)...);
+		return m_storage_impl.storage(std::forward<decltype(args_)>(args_)...);
 	}
-	decltype(auto) storage(auto &&... args) const noexcept
+	decltype(auto) storage(auto &&... args_) const noexcept
 	{
-		return m_storage_impl.storage(std::forward<decltype(args)>(args)...);
+		return m_storage_impl.storage(std::forward<decltype(args_)>(args_)...);
 	}
-	decltype(auto) bytes(auto &&... args) noexcept
+	decltype(auto) bytes(auto &&... args_) noexcept
 	{
-		return m_bytes_impl.bytes(std::forward<decltype(args)>(args)...);
+		return m_bytes_impl.bytes(std::forward<decltype(args_)>(args_)...);
 	}
-	decltype(auto) bytes(auto &&... args) const noexcept
+	decltype(auto) bytes(auto &&... args_) const noexcept
 	{
-		return m_bytes_impl.bytes(std::forward<decltype(args)>(args)...);
+		return m_bytes_impl.bytes(std::forward<decltype(args_)>(args_)...);
 	}
-	decltype(auto) offset(auto &&... args) const noexcept
+	decltype(auto) offset(auto &&... args_) const noexcept
 	{
-		return m_size_impl.offset(std::forward<decltype(args)>(args)...);
+		return m_size_impl.offset(std::forward<decltype(args_)>(args_)...);
 	}
-	decltype(auto) size(auto &&... args) const noexcept
+	decltype(auto) size(auto &&... args_) const noexcept
 	{
-		return m_size_impl.size(std::forward<decltype(args)>(args)...);
+		return m_size_impl.size(std::forward<decltype(args_)>(args_)...);
 	}
-	decltype(auto) child_size(auto &&... args) const noexcept
+	decltype(auto) child_size(auto &&... args_) const noexcept
 	{
-		return m_children_size_impl.child_size(std::forward<decltype(args)>(args)...);
+		return m_children_size_impl.child_size(std::forward<decltype(args_)>(args_)...);
 	}
-	decltype(auto) inside(auto &&... args) const noexcept
+	decltype(auto) inside(auto &&... args_) const noexcept
 	{
-		return m_size_impl.inside(std::forward<decltype(args)>(args)...);
+		return m_size_impl.inside(std::forward<decltype(args_)>(args_)...);
 	}
-	decltype(auto) matrix(auto &&... args) const noexcept
+	decltype(auto) matrix(auto &&... args_) const noexcept
 	{
-		return m_matrix_impl.matrix(std::forward<decltype(args)>(args)...);
+		return m_matrix_impl.matrix(std::forward<decltype(args_)>(args_)...);
 	}
-	decltype(auto) matrix(auto &&... args) noexcept
+	decltype(auto) matrix(auto &&... args_) noexcept
 	{
-		return m_matrix_impl.matrix(std::forward<decltype(args)>(args)...);
+		return m_matrix_impl.matrix(std::forward<decltype(args_)>(args_)...);
 	}
 
 private:
@@ -686,9 +685,9 @@ private:
 
 	VecDi window_to_size(const felt2::VecDi<D - 1> & window_, const VecDi & size_)
 	{
-		VecDi child_size_;
-		child_size_ << window_, size_(size_.size() - 1);
-		return child_size_;
+		VecDi child_size;
+		child_size << window_, size_(size_.size() - 1);
+		return child_size;
 	}
 };
 
@@ -699,7 +698,7 @@ class TemplateParentGridTD
 {
 public:
 	using This = TemplateParentGridTD<T, D, flags>;
-	static constexpr bool is_device_shared = flags & GridFlag::is_device_shared;
+	static constexpr bool k_is_device_shared = (flags & GridFlag::is_device_shared) != 0;
 
 	struct Traits
 	{
@@ -710,7 +709,7 @@ public:
 	using VecDi = felt2::VecDi<Traits::k_dims>;
 	using Leaf = typename Traits::Leaf;
 
-	using ContextImpl = host_or_device_context_t<flags>;
+	using ContextImpl = HostOrDeviceContextT<flags>;
 	using Child = FilterTD<Leaf, Traits::k_dims, flags | GridFlag::is_child>;
 	using ChildrenGrid = ByRef<Child, Traits::k_dims, flags | GridFlag::is_child>;
 
@@ -718,7 +717,7 @@ public:
 	using ChildrenSizeImpl = felt2::components::ChildrenSize<Traits, SizeImpl>;
 
 private:
-	ref_if_child_t<ContextImpl, flags> m_context_impl;
+	RefIfChildT<ContextImpl, flags> m_context_impl;
 	SizeImpl m_size_impl;
 	ChildrenSizeImpl m_children_size_impl;
 	ChildrenGrid m_children;
@@ -745,7 +744,7 @@ public:
 	TemplateParentGridTD(
 		decltype(m_context_impl) context_,
 		const VecDi & size_,
-		const felt2::VecDi<D - 1> & child_window_) requires(is_device_shared)
+		const felt2::VecDi<D - 1> & child_window_) requires(k_is_device_shared)
 		: m_context_impl{std::move(context_)},
 		  m_size_impl{size_, {0, 0, 0}},
 		  m_children_size_impl{m_size_impl, window_to_size(child_window_, m_size_impl.size())},
@@ -759,7 +758,7 @@ public:
 		decltype(m_context_impl) context_,
 		const VecDi & size_,
 		const VecDi & child_size_,
-		const VecDi & offset_) requires(!is_device_shared)
+		const VecDi & offset_) requires(!k_is_device_shared)
 		: m_context_impl{std::move(context_)},
 		  m_size_impl{size_, offset_},
 		  m_children_size_impl{m_size_impl, child_size_},
@@ -770,23 +769,23 @@ public:
 	}
 
 	// Note: if/when copying is required, cannot default due to reference copying.
-	TemplateParentGridTD(This const & other) noexcept = delete;
+	TemplateParentGridTD(This const & other_) noexcept = delete;
 
-	TemplateParentGridTD(This && other) noexcept = default;
+	TemplateParentGridTD(This && other_) noexcept = default;
 
 	~TemplateParentGridTD() = default;
 
-	This & operator=(This && other) noexcept = default;
-	This & operator=(This const & other) = delete;
+	This & operator=(This && other_) noexcept = default;
+	This & operator=(This const & other_) = delete;
 
-	auto & context(this auto & self) noexcept
+	auto & context(this auto & self_) noexcept
 	{
-		return unwrap_ref(self.m_context_impl);
+		return unwrap_ref(self_.m_context_impl);
 	}
 
-	auto & children(this auto & self) noexcept
+	auto & children(this auto & self_) noexcept
 	{
-		return self.m_children;
+		return self_.m_children;
 	}
 
 private:
@@ -800,9 +799,9 @@ private:
 
 	VecDi window_to_size(const felt2::VecDi<D - 1> & window_, const VecDi & size_)
 	{
-		VecDi child_size_;
-		child_size_ << window_, size_(size_.size() - 1);
-		return child_size_;
+		VecDi child_size;
+		child_size << window_, size_(size_.size() - 1);
+		return child_size;
 	}
 };
 }  // namespace convfelt

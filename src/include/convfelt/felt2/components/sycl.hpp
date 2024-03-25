@@ -5,14 +5,13 @@
 #include <algorithm>
 #include <cstddef>
 #include <cstdint>
-#include <hipSYCL/sycl/libkernel/multi_ptr.hpp>
+#include <memory>
 #include <span>
+#include <string_view>
 
 #include <etl/private/to_string_helper.h>
 #include <etl/string.h>
-
 #include <experimental/mdspan>
-#include <string_view>
 #include <sycl/sycl.hpp>
 
 #include "./core.hpp"
@@ -24,21 +23,21 @@ namespace etl::private_to_string
 
 template <typename TIString, typename T, felt2::Dim D>
 const TIString & to_string(
-	const felt2::VecDT<T, D> & value,
-	TIString & str,
-	const etl::basic_format_spec<TIString> & format,
-	bool append = false)
+	const felt2::VecDT<T, D> & value_,
+	TIString & str_,
+	const etl::basic_format_spec<TIString> & format_,
+	bool append_ = false)
 {
-	str += "(";
-	to_string(value(0), str, append);
-	for (decltype(value.size()) dim = 1; dim < value.size(); ++dim)
+	str_ += "(";
+	to_string(value_(0), str_, append_);
+	for (decltype(value_.size()) dim = 1; dim < value_.size(); ++dim)
 	{
-		str += ", ";
-		to_string(value(dim), str, format, true);
+		str_ += ", ";
+		to_string(value_(dim), str_, format_, true);
 	}
-	str += ")";
+	str_ += ")";
 
-	return str;
+	return str_;
 }
 }  // namespace etl::private_to_string
 
@@ -50,56 +49,56 @@ namespace felt2::device
 
 template <typename T>
 auto make_unique_sycl(
-	std::size_t count, sycl::device const & dev, sycl::context const & ctx, auto &&... args)
+	std::size_t count_, sycl::device const & dev_, sycl::context const & ctx_, auto &&... args_)
 {
-	auto * mem_region = sycl::malloc_shared<T>(count, dev, ctx);
+	auto * mem_region = sycl::malloc_shared<T>(count_, dev_, ctx_);
 	if (!mem_region)
 	{
 		throw std::runtime_error{"make_unique_sycl: sycl::malloc_shared failed"};
 	}
-	auto deleter = [ctx](T * ptr) { sycl::free(ptr, ctx); };
+	auto deleter = [ctx_](T * ptr_) { sycl::free(ptr_, ctx_); };
 	auto ptr = std::unique_ptr<T, decltype(deleter)>{mem_region, std::move(deleter)};
 
-	new (mem_region) T{std::forward<decltype(args)>(args)...};
+	new (mem_region) T{std::forward<decltype(args_)>(args_)...};
 	return ptr;
 }
 
 template <typename T>
-auto make_unique_sycl(sycl::device const & dev, sycl::context const & ctx, auto &&... args)
+auto make_unique_sycl(sycl::device const & dev_, sycl::context const & ctx_, auto &&... args_)
 {
-	return make_unique_sycl<T>(1, dev, ctx, std::forward<decltype(args)>(args)...);
+	return make_unique_sycl<T>(1, dev_, ctx_, std::forward<decltype(args_)>(args_)...);
 }
 
 template <class T>
 struct SyclDeleter
 {
 	sycl::context ctx;
-	void operator()(T * ptr)
+	void operator()(T * ptr_)
 	{
-		sycl::free(ptr, ctx);
+		sycl::free(ptr_, ctx);
 	}
 };
 
 template <typename T>
-auto make_unique_sycl_array(sycl::queue const & queue, std::size_t const size)
+auto make_unique_sycl_array(sycl::queue const & queue_, std::size_t const size_)
 {
-	auto * mem_region = sycl::malloc_shared<T>(size, queue);
+	auto * mem_region = sycl::malloc_shared<T>(size_, queue_);
 	auto ptr =
-		std::unique_ptr<T[], SyclDeleter<T>>{mem_region, SyclDeleter<T>{queue.get_context()}};
+		std::unique_ptr<T[], SyclDeleter<T>>{mem_region, SyclDeleter<T>{queue_.get_context()}};
 	return std::move(ptr);
 }
 
 template <typename T>
 auto make_unique_sycl_array(
-	sycl::device const & dev, sycl::context const & ctx, std::size_t const size)
+	sycl::device const & dev_, sycl::context const & ctx_, std::size_t const size_)
 {
-	auto * mem_region = sycl::malloc_shared<T>(size, dev, ctx);
-	auto ptr = std::unique_ptr<T[], SyclDeleter<T>>{mem_region, SyclDeleter<T>{ctx}};
+	auto * mem_region = sycl::malloc_shared<T>(size_, dev_, ctx_);
+	auto ptr = std::unique_ptr<T[], SyclDeleter<T>>{mem_region, SyclDeleter<T>{ctx_}};
 	return std::move(ptr);
 }
 
 template <typename T>
-using unique_sycl_array_t =
+using UniqueSyclArrayT =
 	decltype(make_unique_sycl_array<T>(std::declval<sycl::queue>(), std::declval<std::size_t>()));
 
 }  // namespace felt2::device
@@ -108,7 +107,7 @@ namespace felt2::components::device
 {
 using felt2::device::make_unique_sycl;
 using felt2::device::make_unique_sycl_array;
-using felt2::device::unique_sycl_array_t;
+using felt2::device::UniqueSyclArrayT;
 
 template <HasLog Logger, HasAbort Aborter>
 struct Context
@@ -118,17 +117,21 @@ struct Context
 	sycl::device m_dev;
 	sycl::context m_ctx;
 
-	auto& logger(this auto & self) {
-		return self.m_logger_impl;
+	auto & logger(this auto & self_)
+	{
+		return self_.m_logger_impl;
 	}
-	auto& aborter(this auto & self) {
-		return self.m_aborter_impl;
+	auto & aborter(this auto & self_)
+	{
+		return self_.m_aborter_impl;
 	}
-	auto& device(this auto & self) {
-		return self.m_dev;
+	auto & device(this auto & self_)
+	{
+		return self_.m_dev;
 	}
-	auto& context(this auto & self) {
-		return self.m_ctx;
+	auto & context(this auto & self_)
+	{
+		return self_.m_ctx;
 	}
 };
 
@@ -141,8 +144,8 @@ struct USMRawArray
 	using UniquePtr = decltype(make_unique_sycl<Leaf>(
 		std::declval<std::size_t>(), std::declval<sycl::device>(), std::declval<sycl::context>()));
 
-	USMRawArray(std::size_t count, sycl::device const & dev, sycl::context const & ctx)
-		: m_ptr{make_unique_sycl<Leaf>(count, dev, ctx)}, m_data{m_ptr.get(), count}
+	USMRawArray(std::size_t count_, sycl::device const & dev_, sycl::context const & ctx_)
+		: m_ptr{make_unique_sycl<Leaf>(count_, dev_, ctx_)}, m_data{m_ptr.get(), count_}
 	{
 	}
 
@@ -151,7 +154,7 @@ struct USMRawArray
 		return m_data;
 	}
 
-	Array const & storage() const
+	[[nodiscard]] Array const & storage() const
 	{
 		return m_data;
 	}
@@ -195,9 +198,9 @@ struct Stream
 		return *m_stream;
 	}
 
-	void set_stream(sycl::stream * stream)
+	void set_stream(sycl::stream * stream_)
 	{
-		m_stream = stream;
+		m_stream = stream_;
 	}
 
 	sycl::stream * m_stream{nullptr};
@@ -207,9 +210,9 @@ struct Log
 {
 	struct Storage
 	{
-		unique_sycl_array_t<char> char_data;
+		UniqueSyclArrayT<char> char_data;
 		// Cannot be std::vector since no copy constructor.
-		unique_sycl_array_t<etl::string_ext> str_data;
+		UniqueSyclArrayT<etl::string_ext> str_data;
 		std::span<etl::string_ext> strs;
 	};
 
@@ -217,7 +220,7 @@ struct Log
 	mutable sycl::private_ptr<std::size_t const> stream_id;
 
 	template <class... Args>
-	constexpr bool log(Args &&... args) const noexcept
+	constexpr bool log(Args &&... args_) const noexcept
 	{
 		if (strs.empty())
 			return false;
@@ -229,14 +232,14 @@ struct Log
 		(
 			[&]
 			{
-				if constexpr (requires { std::string_view{args}; })
+				if constexpr (requires { std::string_view{args_}; })
 				{
-					std::string_view const arg_str{args};
+					std::string_view const arg_str{args_};
 					str.append(arg_str.data(), arg_str.size());
 				}
 				else
 				{
-					etl::to_string(args, str, true);
+					etl::to_string(args_, str, true);
 				}
 			}(),
 			...);
@@ -246,40 +249,40 @@ struct Log
 
 	[[nodiscard]] constexpr bool has_logs() const noexcept
 	{
-		return !std::ranges::all_of(strs, [](auto const & str) { return str.empty(); });
+		return !std::ranges::all_of(strs, [](auto const & str_) { return str_.empty(); });
 	}
 
-	[[nodiscard]] constexpr std::string_view text(std::size_t const stream_idx) const noexcept
+	[[nodiscard]] constexpr std::string_view text(std::size_t const stream_idx_) const noexcept
 	{
-		return std::string_view{strs[stream_idx].data(), strs[stream_idx].size()};
+		return std::string_view{strs[stream_idx_].data(), strs[stream_idx_].size()};
 	}
 
-	void set_storage(Storage const & storage)
+	void set_storage(Storage const & storage_)
 	{
-		strs = storage.strs;
+		strs = storage_.strs;
 	}
 
-	void set_stream(std::size_t const * id) const
+	void set_stream(std::size_t const * id_) const
 	{
-		stream_id = id;
+		stream_id = id_;
 	}
 
 	[[nodiscard]] static Storage make_storage(
-		sycl::device const & dev,
-		sycl::context const & ctx,
-		std::size_t const num_streams,
-		std::size_t const max_msg_size)
+		sycl::device const & dev_,
+		sycl::context const & ctx_,
+		std::size_t const num_streams_,
+		std::size_t const max_msg_size_)
 	{
-		auto char_data = make_unique_sycl_array<char>(dev, ctx, num_streams * max_msg_size);
-		auto str_data = make_unique_sycl_array<etl::string_ext>(dev, ctx, num_streams);
-		std::span const str_data_span{str_data.get(), num_streams};
+		auto char_data = make_unique_sycl_array<char>(dev_, ctx_, num_streams_ * max_msg_size_);
+		auto str_data = make_unique_sycl_array<etl::string_ext>(dev_, ctx_, num_streams_);
+		std::span const str_data_span{str_data.get(), num_streams_};
 		Storage storage{std::move(char_data), std::move(str_data), str_data_span};
 
-		stdx::mdspan const char_data_span{storage.char_data.get(), num_streams, max_msg_size};
+		stdx::mdspan const char_data_span{storage.char_data.get(), num_streams_, max_msg_size_};
 
-		for (std::size_t stream_idx = 0; stream_idx < num_streams; ++stream_idx)
+		for (std::size_t stream_idx = 0; stream_idx < num_streams_; ++stream_idx)
 			new (&str_data_span[stream_idx])
-				etl::string_ext{&char_data_span[stream_idx, 0], max_msg_size};
+				etl::string_ext{&char_data_span[stream_idx, 0], max_msg_size_};
 
 		return storage;
 	}
@@ -287,7 +290,7 @@ struct Log
 
 struct Aborter
 {
-	void abort() const noexcept
+	static void abort() noexcept
 	{
 #ifndef FELT2_DEBUG_NONFATAL
 		// TODO(DF): Need a less vendor-specific solution. AdaptiveCpp generic JIT backend is
