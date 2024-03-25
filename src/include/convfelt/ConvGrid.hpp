@@ -65,18 +65,18 @@ constexpr decltype(auto) unwrap_ref(auto && maybe_wrapped_)
 		maybe_wrapped_);
 }
 
-auto make_host_context()
+inline auto make_host_context()
 {
 	return felt2::components::Context{felt2::components::Log{}, felt2::components::Aborter{}};
 }
 
-auto make_device_context(sycl::device const & dev_, sycl::context const & ctx_)
+inline auto make_device_context(sycl::device const & dev_, sycl::context const & ctx_)
 {
 	return felt2::components::device::Context{
 		felt2::components::device::Log{}, felt2::components::device::Aborter{}, dev_, ctx_};
 }
 
-auto make_device_context(sycl::queue const & queue_)
+inline auto make_device_context(sycl::queue const & queue_)
 {
 	return make_device_context(queue_.get_device(), queue_.get_context());
 }
