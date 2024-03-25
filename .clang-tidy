@@ -87,6 +87,8 @@ CheckOptions:
     value:           lower_case
   - key:             readability-identifier-naming.ParameterCase
     value:           lower_case
+  - key:             readability-identifier-naming.ParameterSuffix
+    value:           _
   - key:             readability-identifier-naming.TypeAliasCase
     value:           CamelCase
   - key:             readability-identifier-naming.TypedefCase

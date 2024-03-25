@@ -200,6 +200,16 @@ public:
 		m_activate_impl.activate();
 	}
 
+	// Note: if/when copying is required, cannot default due to reference copying.
+	ByValue(This const & other) noexcept = delete;
+
+	ByValue(This && other) noexcept = default;
+
+	~ByValue() = default;
+
+	This & operator=(This && other) noexcept = default;
+	This & operator=(This const & other) = delete;
+
 	auto & context(this auto & self) noexcept
 	{
 		return unwrap_ref(self.m_context_impl);
@@ -326,6 +336,22 @@ public:
 		m_activate_impl.activate();
 	}
 
+//	ByRef(This const & other) noexcept
+//		: m_context_impl{other.m_context_impl},
+//		  m_size_impl{other.m_size_impl},
+//		  m_storage_impl{other.m_storage_impl},
+//		  m_activate_impl{
+//			  m_context_impl, m_size_impl, m_storage_impl, other.m_activate_impl.m_background} {};
+
+	ByRef(This && other) noexcept = default;
+
+	ByRef(This const& other) noexcept = delete;
+
+	~ByRef() = default;
+
+	This & operator=(This && other) noexcept = default;
+	This & operator=(This const & other) = delete;
+
 	auto & context(this auto & self) noexcept
 	{
 		return unwrap_ref(self.m_context_impl);
@@ -408,7 +434,7 @@ public:
 
 	// Note: reference semantics mean we can't blindly copy `other` - reference_wrappers for e.g.
 	// storage would still point to the original instance.
-	FilterTD(This const & other)
+	FilterTD(This const & other) noexcept
 		: m_context_impl{other.m_context_impl},
 		  m_size_impl{other.m_size_impl},
 		  m_storage_impl{other.m_storage_impl},
@@ -418,7 +444,12 @@ public:
 	{
 	}
 
-	explicit FilterTD(This && other) noexcept = default;
+	FilterTD(This && other) noexcept = default;
+
+	~FilterTD() = default;
+
+	This & operator=(This && other) noexcept = default;
+	This & operator=(This const & other) = delete;
 
 	decltype(auto) storage(auto &&... args) noexcept
 	{
@@ -578,6 +609,16 @@ public:
 		assert_child_size();
 	}
 
+	// Note: if/when copying is required, cannot default due to reference copying.
+	ConvGridTD(This const & other) noexcept = delete;
+
+	ConvGridTD(This && other) noexcept = default;
+
+	~ConvGridTD() = default;
+
+	This & operator=(This && other) noexcept = default;
+	This & operator=(This const & other) = delete;
+
 	auto & context(this auto & self) noexcept
 	{
 		return unwrap_ref(self.m_context_impl);
@@ -728,19 +769,24 @@ public:
 		assert_child_size();
 	}
 
+	// Note: if/when copying is required, cannot default due to reference copying.
+	TemplateParentGridTD(This const & other) noexcept = delete;
+
+	TemplateParentGridTD(This && other) noexcept = default;
+
+	~TemplateParentGridTD() = default;
+
+	This & operator=(This && other) noexcept = default;
+	This & operator=(This const & other) = delete;
+
 	auto & context(this auto & self) noexcept
 	{
 		return unwrap_ref(self.m_context_impl);
 	}
 
-	const ChildrenGrid & children() const noexcept
+	auto & children(this auto & self) noexcept
 	{
-		return m_children;
-	}
-
-	ChildrenGrid & children() noexcept
-	{
-		return m_children;
+		return self.m_children;
 	}
 
 private:
