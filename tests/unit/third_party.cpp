@@ -68,7 +68,6 @@ namespace stdex = std::experimental;
 #include <convfelt/ConvGrid.hpp>
 #include <convfelt/felt2/typedefs.hpp>
 #include <convfelt/iter.hpp>
-#include <convfelt/memory.hpp>
 
 SCENARIO("Using OpenImageIO with cppcoro and loading into Felt grid")
 {
@@ -121,6 +120,7 @@ SCENARIO("Using OpenImageIO with cppcoro and loading into Felt grid")
 				image_grid_spec.format = OIIO::TypeDescFromC<felt2::Scalar>::value();
 
 				convfelt::InputGrid image_grid{
+					convfelt::make_host_context(),
 					{image_grid_spec.height, image_grid_spec.width, image_grid_spec.nchannels},
 					{0, 0, 0},
 					0};
@@ -152,6 +152,7 @@ SCENARIO("Using OpenImageIO with cppcoro and loading into Felt grid")
 				image_grid_spec.format = OIIO::TypeDescFromC<felt2::Scalar>::value();
 
 				convfelt::InputGrid image_grid{
+					convfelt::make_host_context(),
 					{image.spec().height + 2, image.spec().width + 2, image_grid_spec.nchannels},
 					{0, 0, 0},
 					0};
@@ -793,6 +794,7 @@ SCENARIO("Input/output ConvGrids")
 		image_grid_spec.format = OIIO::TypeDescFromC<felt2::Scalar>::value();
 
 		convfelt::InputGrid image_grid{
+			convfelt::make_host_context(),
 			{image.spec().height + 2, image.spec().width + 2, image_grid_spec.nchannels},
 			{0, 0, 0},
 			0};
@@ -802,9 +804,10 @@ SCENARIO("Input/output ConvGrids")
 
 		WHEN("image is split into filter regions")
 		{
-			FilterSizeHelper filter_input_sizer{felt2::Vec3i{4, 4, 3}, felt2::Vec3i{2, 2, 0}};
+			FilterSizeHelper const filter_input_sizer{felt2::Vec3i{4, 4, 3}, felt2::Vec3i{2, 2, 0}};
 
 			convfelt::ConvGrid filter_input_grid{
+				convfelt::make_host_context(),
 				filter_input_sizer.input_size_from_source_size(image_grid.size()),
 				filter_input_sizer.filter_size};
 
@@ -942,7 +945,7 @@ SCENARIO("Basic SyCL usage")
 		WHEN("USM vector is doubled by kernel")
 		{
 			using Allocator = sycl::usm_allocator<float, sycl::usm::alloc::shared>;
-			auto vals = felt2::make_unique_sycl<std::vector<float, Allocator>>(
+			auto vals = felt2::device::make_unique_sycl<std::vector<float, Allocator>>(
 				q.get_device(), q.get_context(), Allocator{q});
 			vals->push_back(1);
 			vals->push_back(2);
@@ -1126,7 +1129,7 @@ SCENARIO("Assertion and logging in SYCL")
 		WHEN("a kernel with a logger that relies on private memory is executed")
 		{
 			auto appender =
-				felt2::make_unique_sycl<ThreadAppender>(1, q.get_device(), q.get_context());
+				felt2::device::make_unique_sycl<ThreadAppender>(1, q.get_device(), q.get_context());
 
 			q.submit(
 				[&](sycl::handler & cgh)
@@ -1156,9 +1159,9 @@ SCENARIO("Assertion and logging in SYCL")
 		}
 		WHEN("a kernel with a logger is executed")
 		{
-			auto storage = felt2::components::Log::make_storage(
+			auto storage = felt2::components::device::Log::make_storage(
 				q.get_device(), q.get_context(), work_items.get(0), 1024UL);
-			felt2::components::Log logger;
+			felt2::components::device::Log logger;
 			logger.set_storage(storage);
 
 			q.submit(
@@ -1184,9 +1187,9 @@ SCENARIO("Assertion and logging in SYCL")
 		}
 		WHEN("a kernel logs to unexpected stream ids")
 		{
-			auto storage = felt2::components::Log::make_storage(
+			auto storage = felt2::components::device::Log::make_storage(
 				q.get_device(), q.get_context(), work_items.get(0), 1024UL);
-			felt2::components::Log logger;
+			felt2::components::device::Log logger;
 			logger.set_storage(storage);
 
 			q.submit(
@@ -1217,9 +1220,9 @@ SCENARIO("Assertion and logging in SYCL")
 
 		WHEN("a kernel logs to thread-local stream and no stream is set")
 		{
-			auto storage = felt2::components::Log::make_storage(
+			auto storage = felt2::components::device::Log::make_storage(
 				q.get_device(), q.get_context(), work_items.get(0), 1024UL);
-			felt2::components::Log logger;
+			felt2::components::device::Log logger;
 			logger.set_storage(storage);
 
 			q.submit(
@@ -1246,9 +1249,9 @@ SCENARIO("Assertion and logging in SYCL")
 
 		WHEN("a kernel logs to thread-local stream then again with no stream set")
 		{
-			auto storage = felt2::components::Log::make_storage(
+			auto storage = felt2::components::device::Log::make_storage(
 				q.get_device(), q.get_context(), work_items.get(0), 1024UL);
-			felt2::components::Log logger;
+			felt2::components::device::Log logger;
 			logger.set_storage(storage);
 
 			q.submit(
@@ -1300,8 +1303,12 @@ SCENARIO("SyCL with ConvGrid")
 		sycl::device dev{sycl::gpu_selector_v};
 		using ConvGrid = convfelt::ConvGridTD<float, 3, true>;
 
-		auto pgrid = convfelt::make_unique_sycl<ConvGrid>(
-			dev, ctx, felt2::Vec3i{4, 4, 3}, felt2::Vec2i{2, 2}, ctx, dev);
+		auto pgrid = felt2::device::make_unique_sycl<ConvGrid>(
+			dev,
+			ctx,
+			convfelt::make_device_context(dev, ctx),
+			felt2::Vec3i{4, 4, 3},
+			felt2::Vec2i{2, 2});
 
 		std::fill(pgrid->storage().begin(), pgrid->storage().end(), 3);
 		REQUIRE(pgrid->children().storage().size() > 0);
@@ -1315,9 +1322,9 @@ SCENARIO("SyCL with ConvGrid")
 
 			sycl::queue q{ctx, dev, &async_handler};
 
-			[[maybe_unused]] auto const log_storage = felt2::components::Log::make_storage(
+			[[maybe_unused]] auto const log_storage = felt2::components::device::Log::make_storage(
 				q.get_device(), q.get_context(), work_items.get(0), 1024UL);
-			pgrid->set_log_storage(log_storage);
+			pgrid->context().logger().set_storage(log_storage);
 
 			q.submit([&](sycl::handler & cgh)
 					 { cgh.prefetch(pgrid->storage().data(), pgrid->storage().size()); });
@@ -1341,7 +1348,7 @@ SCENARIO("SyCL with ConvGrid")
 			q.wait_and_throw();
 			THEN("result is as expected")
 			{
-				CHECK(!pgrid->has_logs());
+				CHECK(!pgrid->context().logger().has_logs());
 
 				for (auto const val : convfelt::iter::val(*pgrid)) CHECK(val == 6);
 			}
@@ -1349,13 +1356,13 @@ SCENARIO("SyCL with ConvGrid")
 
 		WHEN("out of bounds access")
 		{
-//			sycl::device cpu_dev{sycl::cpu_selector_v};
+			//			sycl::device cpu_dev{sycl::cpu_selector_v};
 			sycl::range<1> work_items{pgrid->children().storage().size()};
 			sycl::queue q{ctx, dev, &async_handler};
 
-			[[maybe_unused]] auto log_storage = felt2::components::Log::make_storage(
+			[[maybe_unused]] auto log_storage = felt2::components::device::Log::make_storage(
 				q.get_device(), q.get_context(), work_items.get(0), 1024UL);
-			pgrid->set_log_storage(log_storage);
+			pgrid->context().logger().set_storage(log_storage);
 
 			q.submit(
 				[&](sycl::handler & cgh)
@@ -1365,7 +1372,7 @@ SCENARIO("SyCL with ConvGrid")
 						[pgrid = pgrid.get()](sycl::id<1> tid)
 						{
 							auto const log_id = static_cast<std::size_t>(tid);
-							pgrid->set_log_stream(&log_id);
+							pgrid->context().logger().set_stream(&log_id);
 
 							auto child_idx = static_cast<felt2::PosIdx>(tid) + 1;
 							pgrid->children().get(child_idx);
@@ -1379,11 +1386,11 @@ SCENARIO("SyCL with ConvGrid")
 
 			THEN("out of bounds access is logged")
 			{
-				CHECK(pgrid->text(0) == "");
-				CHECK(pgrid->text(1) == "");
-				CHECK(pgrid->text(2) == "");
+				CHECK(pgrid->context().logger().text(0uz) == "");
+				CHECK(pgrid->context().logger().text(1uz) == "");
+				CHECK(pgrid->context().logger().text(2uz) == "");
 				CHECK(
-					pgrid->text(3) ==
+					pgrid->context().logger().text(3uz) ==
 					"AssertionError: get:  assert_pos_idx_bounds(4) i.e. (0, 0, 0) is greater than "
 					"extent 4\n");
 			}
@@ -1404,6 +1411,7 @@ SCENARIO("Applying filter to ConvGrid")
 		image_grid_spec.format = OIIO::TypeDescFromC<felt2::Scalar>::value();
 
 		convfelt::InputGrid image_grid{
+			convfelt::make_host_context(),
 			{image.spec().height + 2, image.spec().width + 2, image_grid_spec.nchannels},
 			{0, 0, 0},
 			0};
@@ -1422,8 +1430,12 @@ SCENARIO("Applying filter to ConvGrid")
 
 			auto input_size = filter_input_sizer.input_size_from_source_size(image_grid.size());
 
-			auto filter_input_grid = convfelt::make_unique_sycl<FilterGrid>(
-				dev, ctx, input_size, filter_input_sizer.filter_window(), ctx, dev);
+			auto filter_input_grid = felt2::device::make_unique_sycl<FilterGrid>(
+				dev,
+				ctx,
+				convfelt::make_device_context(dev, ctx),
+				input_size,
+				filter_input_sizer.filter_window());
 
 			for (auto const & [filter_pos_idx, filter] :
 				 convfelt::iter::idx_and_val(filter_input_grid->children()))
@@ -1444,21 +1456,31 @@ SCENARIO("Applying filter to ConvGrid")
 			WHEN("image is split into filter regions on device")
 			{
 				auto image_grid_device =
-					convfelt::make_unique_sycl<convfelt::ByValue<felt2::Scalar, 3, true>>(
-						dev, ctx, image_grid.size(), image_grid.offset(), 0.0f, ctx, dev);
+					felt2::device::make_unique_sycl<convfelt::ByValue<felt2::Scalar, 3, true>>(
+						dev,
+						ctx,
+						convfelt::make_device_context(dev, ctx),
+						image_grid.size(),
+						image_grid.offset(),
+						0.0f);
 
 				image_grid_device->storage().assign(
 					image_grid.storage().begin(), image_grid.storage().end());
 
-				auto filter_input_grid_device = convfelt::make_unique_sycl<FilterGrid>(
-					dev, ctx, input_size, filter_input_sizer.filter_window(), ctx, dev);
+				auto filter_input_grid_device = felt2::device::make_unique_sycl<FilterGrid>(
+					dev,
+					ctx,
+					convfelt::make_device_context(dev, ctx),
+					input_size,
+					filter_input_sizer.filter_window());
 				sycl::range<1> work_items{image_grid_device->storage().size()};
 				sycl::queue q{ctx, dev, &async_handler};
 
-				[[maybe_unused]] auto const log_storage = felt2::components::Log::make_storage(
-					q.get_device(), q.get_context(), work_items.get(0), 1024UL);
-				image_grid_device->set_log_storage(log_storage);
-				filter_input_grid_device->set_log_storage(log_storage);
+				[[maybe_unused]] auto const log_storage =
+					felt2::components::device::Log::make_storage(
+						q.get_device(), q.get_context(), work_items.get(0), 1024UL);
+				image_grid_device->context().logger().set_storage(log_storage);
+				filter_input_grid_device->context().logger().set_storage(log_storage);
 
 				q.submit(
 					[&](sycl::handler & cgh)
@@ -1523,14 +1545,13 @@ SCENARIO("Applying filter to ConvGrid")
 			{
 				FilterSizeHelper const filter_output_sizer{felt2::Vec3i{2, 2, 4}};
 
-				auto filter_output_grid = convfelt::make_unique_sycl<FilterGrid>(
+				auto filter_output_grid = felt2::device::make_unique_sycl<FilterGrid>(
 					dev,
 					ctx,
+					convfelt::make_device_context(dev, ctx),
 					filter_output_sizer.output_size_from_num_filter_regions(
 						filter_input_grid->children().size()),
-					filter_output_sizer.filter_window(),
-					ctx,
-					dev);
+					filter_output_sizer.filter_window());
 
 				REQUIRE(
 					filter_output_grid->children().size() == filter_input_grid->children().size());
@@ -1579,10 +1600,10 @@ SCENARIO("Applying filter to ConvGrid")
 						filter_output_grid->storage().size(),
 						static_cast<size_t>(filter_output_grid->child_size().prod())};
 
-					auto log_storage = felt2::components::Log::make_storage(
+					auto log_storage = felt2::components::device::Log::make_storage(
 						q.get_device(), q.get_context(), work_range.get_local().get(0), 1024UL);
-					filter_input_grid->set_log_storage(log_storage);
-					filter_output_grid->set_log_storage(log_storage);
+					filter_input_grid->context().logger().set_storage(log_storage);
+					filter_output_grid->context().logger().set_storage(log_storage);
 
 					q.submit(
 						[&](sycl::handler & cgh)
@@ -1619,7 +1640,7 @@ SCENARIO("Applying filter to ConvGrid")
 
 									if (input_child.storage().size() != input_child_data.size())
 									{
-										filter_input_grid->log(
+										filter_input_grid->context().logger().log(
 											local_id,
 											"input_child.storage().size() != "
 											"input_child_data.size() i.e. ",
@@ -1631,7 +1652,7 @@ SCENARIO("Applying filter to ConvGrid")
 									}
 									if (local_id >= output_child.storage().size())
 									{
-										filter_output_grid->log(
+										filter_output_grid->context().logger().log(
 											local_id,
 											"local_id >= output_child.storage().size() i.e. ",
 											local_id,
@@ -1670,8 +1691,8 @@ SCENARIO("Applying filter to ConvGrid")
 
 					THEN("values are as expected")
 					{
-						CHECK(!filter_input_grid->has_logs());
-						CHECK(!filter_output_grid->has_logs());
+						CHECK(!filter_input_grid->context().logger().has_logs());
+						CHECK(!filter_output_grid->context().logger().has_logs());
 						assert_expected_values();
 					}
 				}  // WHEN("filter is applied to grid using Eigen in a hand-rolled kernel")
@@ -1680,24 +1701,22 @@ SCENARIO("Applying filter to ConvGrid")
 				{
 					sycl::queue q{ctx, dev, &async_handler};
 
-					auto filter_input_template = convfelt::make_unique_sycl<
+					auto filter_input_template = felt2::device::make_unique_sycl<
 						convfelt::TemplateParentGridTD<felt2::Scalar, 3, true>>(
 						q.get_device(),
 						q.get_context(),
+						convfelt::make_device_context(q),
 						input_size,
-						filter_input_sizer.filter_window(),
-						q.get_context(),
-						q.get_device());
+						filter_input_sizer.filter_window());
 
 					auto image_grid_device =
-						convfelt::make_unique_sycl<convfelt::ByValue<felt2::Scalar, 3, true>>(
+						felt2::device::make_unique_sycl<convfelt::ByValue<felt2::Scalar, 3, true>>(
 							q.get_device(),
 							q.get_context(),
+							convfelt::make_device_context(q),
 							image_grid.size(),
 							image_grid.offset(),
-							0.0f,
-							q.get_context(),
-							q.get_device());
+							0.0f);
 
 					image_grid_device->storage().assign(
 						image_grid.storage().begin(), image_grid.storage().end());
@@ -1762,13 +1781,14 @@ SCENARIO("Applying filter to ConvGrid")
 					sycl::nd_range<1> work_range{
 						num_work_groups * work_group_size, work_group_size};
 
-					[[maybe_unused]] auto const log_storage = felt2::components::Log::make_storage(
-						q.get_device(), q.get_context(), work_range.get_local().get(0), 1024);
+					[[maybe_unused]] auto const log_storage =
+						felt2::components::device::Log::make_storage(
+							q.get_device(), q.get_context(), work_range.get_local().get(0), 1024);
 
-					filter_input_template->children().set_log_storage(log_storage);
-					filter_input_grid->set_log_storage(log_storage);
-					filter_output_grid->set_log_storage(log_storage);
-					image_grid_device->set_log_storage(log_storage);
+					filter_input_template->context().logger().set_storage(log_storage);
+					filter_input_grid->context().logger().set_storage(log_storage);
+					filter_output_grid->context().logger().set_storage(log_storage);
+					image_grid_device->context().logger().set_storage(log_storage);
 
 					q.submit(
 						[&](sycl::handler & cgh)
@@ -1828,7 +1848,7 @@ SCENARIO("Applying filter to ConvGrid")
 									// Assert invariants.
 									if (num_cols != input_child.storage().size())
 									{
-										filter_input_template->children().log(
+										filter_input_template->context().logger().log(
 											local_id,
 											"num_cols != input_child.storage().size() i.e. ",
 											num_cols,
@@ -1840,7 +1860,7 @@ SCENARIO("Applying filter to ConvGrid")
 									if (static_cast<felt2::PosIdx>(weights.rows()) >
 										elems_per_filter)
 									{
-										filter_output_grid->log(
+										filter_output_grid->context().logger().log(
 											local_id,
 											"weights.rows()	> elems_per_filter i.e. ",
 											weights.rows(),
@@ -1881,10 +1901,10 @@ SCENARIO("Applying filter to ConvGrid")
 
 					THEN("values are as expected")
 					{
-						CHECK(!filter_input_grid->has_logs());
-						CHECK(!filter_output_grid->has_logs());
-						CHECK(!image_grid_device->has_logs());
-						CHECK(!filter_input_template->children().has_logs());
+						CHECK(!filter_input_grid->context().logger().has_logs());
+						CHECK(!filter_output_grid->context().logger().has_logs());
+						CHECK(!image_grid_device->context().logger().has_logs());
+						CHECK(!filter_input_template->context().logger().has_logs());
 						assert_expected_values();
 					}
 				}  // WHEN("filter is applied in kernel that computes filter input on the fly")
@@ -1929,13 +1949,12 @@ SCENARIO("Applying filter to ConvGrid")
 			{
 				FilterSizeHelper const filter_output_sizer{felt2::Vec3i(1, 1, 5)};
 
-				auto filter_output_grid = convfelt::make_unique_sycl<FilterGrid>(
+				auto filter_output_grid = felt2::device::make_unique_sycl<FilterGrid>(
 					dev,
 					ctx,
+					convfelt::make_device_context(dev, ctx),
 					filter_output_sizer.output_size_from_num_filter_regions(felt2::Vec3i::Ones()),
-					filter_output_sizer.filter_window(),
-					ctx,
-					dev);
+					filter_output_sizer.filter_window());
 
 				REQUIRE(filter_output_grid->children().size() == felt2::Vec3i(1, 1, 1));
 
@@ -1967,8 +1986,13 @@ SCENARIO("Applying filter to ConvGrid")
 					sycl::queue q{ctx, dev, &async_handler};
 
 					auto image_grid_device =
-						convfelt::make_unique_sycl<convfelt::ByValue<felt2::Scalar, 3, true>>(
-							dev, ctx, image_grid.size(), image_grid.offset(), 0.0F, ctx, dev);
+						felt2::device::make_unique_sycl<convfelt::ByValue<felt2::Scalar, 3, true>>(
+							dev,
+							ctx,
+							convfelt::make_device_context(dev, ctx),
+							image_grid.size(),
+							image_grid.offset(),
+							0.0F);
 
 					image_grid_device->storage().assign(
 						image_grid.storage().begin(), image_grid.storage().end());

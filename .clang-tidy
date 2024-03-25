@@ -27,7 +27,7 @@ WarningsAsErrors: '*'
 HeaderFilterRegex: '.*'
 FormatStyle: file
 CheckOptions:
-  # Allow ALL_CAPS macros used as constants. Otherwise auto-generated export header is caught.
+  # Allow ALL_CAPS macros used as constants. Otherwise, auto-generated export header is caught.
   - key:             cppcoreguidelines-macro-usage.CheckCapsOnly
     value:           true
   # Allow breaking rule of 5 when only special function is a defaulted destructor.
@@ -35,6 +35,12 @@ CheckOptions:
     value:           true
   - key:             cppcoreguidelines-special-member-functions.AllowSoleDefaultDtor
     value:           true
+  # Allow classes where all members are public.
+  - key:             misc-non-private-member-variables-in-classes.IgnoreClassesWithAllMemberVariablesBeingPublic
+    value:           true
+  # Library "umbrella" headers
+  - key:             misc-include-cleaner.IgnoreHeaders
+    value:           sycl
   - key:             readability-identifier-naming.ClassCase
     value:           CamelCase
   - key:             readability-identifier-naming.ClassMemberCase

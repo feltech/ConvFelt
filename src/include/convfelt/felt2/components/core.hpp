@@ -1,10 +1,15 @@
 // Copyright 2023 David Feltell
 // SPDX-License-Identifier: MIT
 #pragma once
+#include <concepts>
+#include <cstddef>
 #include <functional>
+#include <ranges>
 #include <span>
 #include <type_traits>
 #include <vector>
+
+#include <fmt/format.h>
 
 #include "../typedefs.hpp"
 
@@ -12,6 +17,12 @@
 
 namespace felt2::components
 {
+
+constexpr auto unwrap(auto && val)
+{
+	return static_cast<std::unwrap_reference_t<std::decay_t<decltype(val)>>>(
+		std::forward<decltype(val)>(val));
+}
 
 template <class T>
 concept IsStream = requires(T t)
@@ -94,6 +105,14 @@ concept HasResizeableStorage = requires(T obj)
 };
 
 template <class T>
+concept HasSpanStorage = requires(T obj)
+{
+	{
+		obj.storage().subspan(std::declval<std::size_t>(), std::declval<std::size_t>())
+	} -> std::same_as<std::span<typename std::decay_t<decltype(obj.storage())>::value_type>>;
+};
+
+template <class T>
 concept HasBytes = requires(T obj)
 {
 	{
@@ -118,6 +137,19 @@ concept HasLog = requires(T t)
 	{
 		t.log()
 	} -> std::convertible_to<bool>;
+};
+
+template <class T>
+concept HasAbort = requires(T t)
+{
+	{t.abort()};
+};
+
+template <class T>
+concept IsContext = requires(T t)
+{
+	requires HasLog<decltype(t.logger())>;
+	requires HasAbort<decltype(t.aborter())>;
 };
 
 template <class T>
@@ -181,7 +213,7 @@ template <class T>
 concept IsGrid = HasLeafType<T> && HasStorage<T> && HasSize<T> && HasReadAccess<T>;
 
 template <class T>
-concept IsSpanGrid = IsGrid<T> && HasResize<T> && HasResizeableStorage<T>;
+concept IsSpanGrid = IsGrid<T> && HasResize<T> && HasSpanStorage<T>;
 
 template <class T>
 concept IsGridOfSpanGrids = IsGrid<T> && requires
@@ -209,6 +241,22 @@ void format_pos(IsStream auto & stream, VecDT<T, D> const & pos)
 	for (Dim axis = 1; axis < pos.size(); ++axis) stream << ", " << pos(axis);
 	stream << ")";
 }
+
+template <HasLog Logger, HasAbort Aborter>
+struct Context
+{
+	Logger m_logger_impl;
+	Aborter m_aborter_impl;
+
+	auto & logger(this auto & self)
+	{
+		return self.m_logger_impl;
+	}
+	auto & aborter(this auto & self)
+	{
+		return self.m_aborter_impl;
+	}
+};
 
 template <HasDims Traits>
 struct Size
@@ -359,26 +407,15 @@ struct ResizableSize
 	}
 };
 
-template <HasDims Traits, HasLog Log, HasSizeCheck Size, HasStorage Storage>
+template <HasDims Traits, IsContext Context, HasSizeCheck Size, HasStorage Storage>
 struct AssertBounds
 {
 	static constexpr Dim k_dims = Traits::k_dims;
 	using VecDi = VecDi<k_dims>;
 
-	Log & m_log_impl;
-	Size const & m_size_impl;
-	Storage const & m_storage_impl;
-
-	void aborter() const
-	{
-#ifndef FELT2_DEBUG_NONFATAL
-		// TODO(DF): Need a less vendor-specific solution. AdaptiveCpp generic JIT backend is
-		//  __SYCL_SINGLE_SOURCE__ yet provides (as below) vendor-soecific macros to target code to
-		//  host vs. device.
-		__hipsycl_if_target_device(asm("trap;"));
-		__hipsycl_if_target_host(assert(false && "Assertion failure: check logs"));
-#endif
-	}
+	std::reference_wrapper<Context> m_context_impl;
+	std::reference_wrapper<Size const> m_size_impl;
+	std::reference_wrapper<Storage const> m_storage_impl;
 
 	bool assert_pos_bounds(const PosIdx pos_idx_, const char * title_) const
 	{
@@ -392,50 +429,59 @@ struct AssertBounds
 
 	bool assert_pos_bounds(const VecDi & pos_, const char * title_) const
 	{
-		if (!m_size_impl.inside(pos_))
+		if (!m_size_impl.get().inside(pos_))
 		{
-			typename Size::VecDi max_extent = m_size_impl.offset() + m_size_impl.size();
-			m_log_impl.log(
+			typename Size::VecDi max_extent = m_size_impl.get().offset() + m_size_impl.get().size();
+			m_context_impl.get().logger().log(
 				"AssertionError: ",
 				title_,
 				" assert_pos_bounds",
 				pos_,
-				m_size_impl.offset(),
+				m_size_impl.get().offset(),
 				" - ",
 				max_extent,
 				"\n");
 
-			aborter();
+			m_context_impl.get().aborter().abort();
 			return false;
 		}
 		return true;
 	}
 
-	bool assert_pos_idx_bounds(const PosIdx pos_idx_, const char * title_) const
+	bool assert_pos_idx_bounds(const PosIdx pos_idx, const char * title) const
 	{
-		if (pos_idx_ >= m_storage_impl.storage().size())
+		if (pos_idx >= m_storage_impl.get().storage().size())
 		{
-			auto pos = m_size_impl.index(pos_idx_);
+			VecDi pos;
+			if (m_storage_impl.get().storage().size() > 0)
+			{
+				pos = m_size_impl.get().index(pos_idx);
+			}
+			else
+			{
+				constexpr auto nan = std::numeric_limits<typename VecDi::Scalar>::quiet_NaN();
+				pos = VecDi::Constant(nan);
+			}
 
-			m_log_impl.log(
+			m_context_impl.get().logger().log(
 				"AssertionError: ",
-				title_,
+				title,
 				" assert_pos_idx_bounds(",
-				pos_idx_,
+				pos_idx,
 				") i.e. ",
 				pos,
 				" is greater than extent ",
-				m_storage_impl.storage().size(),
+				m_storage_impl.get().storage().size(),
 				"\n");
 
-			aborter();
+			m_context_impl.get().aborter().abort();
 			return false;
 		}
 		return true;
 	}
 };
 
-template <HasDimsAndLeafType Traits, HasSize Size, HasResizeableStorage Storage, HasLog Log>
+template <HasDimsAndLeafType Traits, IsContext Context, HasSize Size, HasResizeableStorage Storage>
 struct Activate
 {
 	/// Dimension of the grid.
@@ -446,9 +492,9 @@ struct Activate
 	/// D-dimensional signed integer vector.
 	using VecDi = VecDi<k_dims>;
 
+	std::reference_wrapper<Context> m_context_impl;
 	std::reference_wrapper<Size const> m_size_impl;
 	std::reference_wrapper<Storage> m_storage_impl;
-	std::reference_wrapper<Log> m_log_impl;
 	Leaf const m_background;
 
 	/**
@@ -497,7 +543,9 @@ struct Activate
 		{
 			const VecDi & pos_min = m_size_impl.get().offset();
 			const VecDi & pos_max = (m_size_impl.get().size() + pos_min - VecDi::Constant(1));
-			m_log_impl.log(title_, ": inactive grid ", pos_min, "-", pos_max, "\n");
+			m_context_impl.get().logger().log(
+				title_, ": inactive grid ", pos_min, "-", pos_max, "\n");
+			m_context_impl.get().aborter().abort();
 		}
 	}
 };
@@ -516,9 +564,9 @@ struct AccessByRef
 	/// D-dimensional signed integer vector.
 	using VecDi = felt2::VecDi<k_dims>;
 
-	Size const & m_size_impl;
-	Storage & m_storage_impl;
-	Assert const & m_assert_impl;
+	std::reference_wrapper<Size const> m_size_impl;
+	std::reference_wrapper<Storage> m_storage_impl;
+	std::reference_wrapper<Assert const> m_assert_impl;
 
 	/**
 	 * Get a reference to the value stored in the grid.
@@ -529,9 +577,9 @@ struct AccessByRef
 	Leaf & get(const VecDi & pos_) noexcept
 	{
 #ifdef FELT2_DEBUG_ENABLED
-		m_assert_impl.assert_pos_bounds(pos_, "get: ");
+		m_assert_impl.get().assert_pos_bounds(pos_, "get: ");
 #endif
-		const PosIdx idx = m_size_impl.index(pos_);
+		const PosIdx idx = m_size_impl.get().index(pos_);
 		return get(idx);
 	}
 
@@ -544,9 +592,9 @@ struct AccessByRef
 	const Leaf & get(const VecDi & pos_) const noexcept
 	{
 #ifdef FELT2_DEBUG_ENABLED
-		m_assert_impl.assert_pos_bounds(pos_, "get: ");
+		m_assert_impl.get().assert_pos_bounds(pos_, "get: ");
 #endif
-		const PosIdx idx = m_size_impl.index(pos_);
+		const PosIdx idx = m_size_impl.get().index(pos_);
 		return get(idx);
 	}
 
@@ -559,9 +607,9 @@ struct AccessByRef
 	Leaf & get(const PosIdx pos_idx_) noexcept
 	{
 #ifdef FELT2_DEBUG_ENABLED
-		m_assert_impl.assert_pos_idx_bounds(pos_idx_, "get: ");
+		m_assert_impl.get().assert_pos_idx_bounds(pos_idx_, "get: ");
 #endif
-		return m_storage_impl.storage()[pos_idx_];
+		return m_storage_impl.get().storage()[pos_idx_];
 	}
 
 	/**
@@ -573,9 +621,9 @@ struct AccessByRef
 	const Leaf & get(const PosIdx pos_idx_) const noexcept
 	{
 #ifdef FELT2_DEBUG_ENABLED
-		m_assert_impl.assert_pos_idx_bounds(pos_idx_, "get: ");
+		m_assert_impl.get().assert_pos_idx_bounds(pos_idx_, "get: ");
 #endif
-		return m_storage_impl.storage()[pos_idx_];
+		return m_storage_impl.get().storage()[pos_idx_];
 	}
 };
 
@@ -593,9 +641,9 @@ struct AccessByValue
 	/// D-dimensional signed integer vector.
 	using VecDi = felt2::VecDi<k_dims>;
 
-	Size const & m_size_impl;
-	Storage & m_storage_impl;
-	Assert const & m_assert_impl;
+	std::reference_wrapper<Size const> m_size_impl;
+	std::reference_wrapper<Storage> m_storage_impl;
+	std::reference_wrapper<Assert const> m_assert_impl;
 
 	/**
 	 * Get the value stored in the grid.
@@ -605,8 +653,8 @@ struct AccessByValue
 	 */
 	Leaf get(const VecDi & pos_) const noexcept
 	{
-		FELT2_DEBUG_CALL(m_assert_impl).assert_pos_bounds(pos_, "get: ");
-		const PosIdx idx = m_size_impl.index(pos_);
+		FELT2_DEBUG_CALL(m_assert_impl).get().assert_pos_bounds(pos_, "get: ");
+		const PosIdx idx = m_size_impl.get().index(pos_);
 		return get(idx);
 	}
 
@@ -618,8 +666,8 @@ struct AccessByValue
 	 */
 	Leaf get(const PosIdx pos_idx_) const noexcept
 	{
-		FELT2_DEBUG_CALL(m_assert_impl).assert_pos_idx_bounds(pos_idx_, "get: ");
-		return m_storage_impl.storage()[pos_idx_];
+		FELT2_DEBUG_CALL(m_assert_impl).get().assert_pos_idx_bounds(pos_idx_, "get: ");
+		return m_storage_impl.get().storage()[pos_idx_];
 	}
 
 	/**
@@ -630,8 +678,8 @@ struct AccessByValue
 	 */
 	void set(const VecDi & pos_, Leaf val_) const noexcept
 	{
-		FELT2_DEBUG_CALL(m_assert_impl).assert_pos_bounds(pos_, "set: ");
-		const PosIdx idx = m_size_impl.index(pos_);
+		FELT2_DEBUG_CALL(m_assert_impl).get().assert_pos_bounds(pos_, "set: ");
+		const PosIdx idx = m_size_impl.get().index(pos_);
 		set(idx, val_);
 	}
 
@@ -644,9 +692,9 @@ struct AccessByValue
 	void set(const PosIdx pos_idx_, Leaf val_) const
 	{
 #ifdef FELT2_DEBUG_ENABLED
-		m_assert_impl.assert_pos_bounds(pos_idx_, "set: ");
+		m_assert_impl.get().assert_pos_bounds(pos_idx_, "set: ");
 #endif
-		m_storage_impl.storage()[pos_idx_] = val_;
+		m_storage_impl.get().storage()[pos_idx_] = val_;
 	}
 };
 
@@ -655,20 +703,20 @@ struct StorageBytes
 {
 	using Leaf = storage_leaf_t<Storage>;
 
-	Storage & m_storage_impl;
+	std::reference_wrapper<Storage> m_storage_impl;
 
 	[[nodiscard]] constexpr std::span<std::byte const> bytes() const noexcept
 	{
 		return {
-			reinterpret_cast<std::byte const *>(m_storage_impl.storage().data()),
-			m_storage_impl.storage().size() * sizeof(Leaf)};
+			reinterpret_cast<std::byte const *>(m_storage_impl.get().storage().data()),
+			m_storage_impl.get().storage().size() * sizeof(Leaf)};
 	}
 
 	[[nodiscard]] constexpr std::span<std::byte> bytes() noexcept
 	{
 		return {
-			reinterpret_cast<std::byte *>(m_storage_impl.storage().data()),
-			m_storage_impl.storage().size() * sizeof(Leaf)};
+			reinterpret_cast<std::byte *>(m_storage_impl.get().storage().data()),
+			m_storage_impl.get().storage().size() * sizeof(Leaf)};
 	}
 };
 
@@ -714,20 +762,22 @@ struct ChildrenSize
 	static constexpr PosIdx k_dims = Traits::k_dims;
 	using VecDi = felt2::VecDi<k_dims>;
 
-	Size const & m_size_impl;
+	std::reference_wrapper<Size const> m_size_impl;
 	/// Size of a child sub-grid.
 	VecDi const m_child_size;
-	VecDi const m_child_offset{(m_size_impl.offset().array() / m_child_size.array()).matrix()};
+	VecDi const m_child_offset{
+		(m_size_impl.get().offset().array() / m_child_size.array()).matrix()};
 	VecDi const m_children_size{
 		[&]() constexpr noexcept
 		{
-			VecDi children_size = (m_size_impl.size().array() / m_child_size.array()).matrix();
+			VecDi children_size =
+				(m_size_impl.get().size().array() / m_child_size.array()).matrix();
 			using Idx = typename VecDi::Index;
 
 			// Ensure total size is covered with partitions in the case that total size doesn't
 			// divide exactly.
 			for (Idx dim = 0; dim < static_cast<Idx>(k_dims); ++dim)
-				if (children_size(dim) * m_child_size(dim) != m_size_impl.size()(dim))
+				if (children_size(dim) * m_child_size(dim) != m_size_impl.get().size()(dim))
 					children_size(dim) += 1;
 
 			return children_size;
@@ -796,15 +846,15 @@ struct ChildrenSize
 
 	template <IsGridOfSpanGrids Children>
 	[[nodiscard]] constexpr Children make_children_span(
-		HasResizeableStorage auto & storage_impl, auto &&... children_args) const
+		IsContext auto & context,
+		HasResizeableStorage auto & storage_impl,
+		IsSpanGrid auto background_) const
 	{
 		storage_impl.storage().resize(m_num_elems_per_child * m_num_children);
 		std::span const parent_data{storage_impl.storage()};
 
 		Children children{
-			m_children_size,
-			m_size_impl.offset(),
-			std::forward<decltype(children_args)>(children_args)...};
+			context, m_children_size, m_size_impl.get().offset(), std::move(background_)};
 
 		// Set each child sub-grid's size and offset.
 		for (PosIdx pos_child_idx = 0; pos_child_idx < children.storage().size(); pos_child_idx++)
@@ -818,13 +868,13 @@ struct ChildrenSize
 				(pos_child_in_parent.array() * m_child_size.array()).matrix();
 			// Position of child in world space, including offset.
 			auto const pos_child_in_world =
-				pos_child_in_world_without_parent_offset + m_size_impl.offset();
+				pos_child_in_world_without_parent_offset + m_size_impl.get().offset();
 
 			// Calculate overflow at edge of grid.
 			auto const pos_lower =
 				(pos_child_in_parent_with_offset.array() * m_child_size.array()).matrix();
 			auto const pos_upper = (pos_lower.array() + m_child_size.array()).matrix();
-			auto const signed_overflow = pos_upper - m_size_impl.size();
+			auto const signed_overflow = pos_upper - m_size_impl.get().size();
 			auto const overflow = signed_overflow.cwiseMax(0);
 
 			auto & child = children.get(pos_child_idx);
@@ -840,12 +890,11 @@ struct ChildrenSize
 	}
 
 	template <IsGridOfSpanGrids Children>
-	[[nodiscard]] constexpr Children make_empty_children(auto &&... children_args) const
+	[[nodiscard]] constexpr Children make_empty_children(
+		IsContext auto & context_, IsSpanGrid auto background_) const
 	{
 		Children children{
-			m_children_size,
-			m_size_impl.offset(),
-			std::forward<decltype(children_args)>(children_args)...};
+			context_, m_children_size, m_size_impl.get().offset(), std::move(background_)};
 
 		// Set each child sub-grid's size and offset.
 		for (PosIdx pos_child_idx = 0; pos_child_idx < children.storage().size(); pos_child_idx++)
@@ -859,13 +908,13 @@ struct ChildrenSize
 				(pos_child_in_parent.array() * m_child_size.array()).matrix();
 			// Position of child in world space, including offset.
 			auto const pos_child_in_world =
-				pos_child_in_world_without_parent_offset + m_size_impl.offset();
+				pos_child_in_world_without_parent_offset + m_size_impl.get().offset();
 
 			// Calculate overflow at edge of grid.
 			auto const pos_lower =
 				(pos_child_in_parent_with_offset.array() * m_child_size.array()).matrix();
 			auto const pos_upper = (pos_lower.array() + m_child_size.array()).matrix();
-			auto const signed_overflow = pos_upper - m_size_impl.size();
+			auto const signed_overflow = pos_upper - m_size_impl.get().size();
 			auto const overflow = signed_overflow.cwiseMax(0);
 
 			auto & child = children.get(pos_child_idx);
@@ -874,6 +923,41 @@ struct ChildrenSize
 		}
 
 		return children;
+	}
+};
+
+struct Log
+{
+	template <std::size_t num_args>
+	static constexpr std::array<char, num_args * 2> template_buff = [] consteval
+	{
+		std::string tmplt;
+		for (std::size_t arg_idx = 0; arg_idx < num_args; ++arg_idx)
+		{
+			tmplt += "{}";
+		}
+		std::array<char, num_args * 2> buff;
+		std::copy(begin(tmplt), end(tmplt), buff.begin());
+		return buff;
+	}();
+
+	template <std::size_t num_args>
+	static constexpr std::string_view template_string{
+		template_buff<num_args>.data(), template_buff<num_args>.size()};
+
+	template <typename... Args>
+	bool log(Args &&... args) const noexcept
+	{
+		fmt::print(template_string<sizeof...(Args)>, std::forward<Args>(args)...);
+		return true;
+	}
+};
+
+struct Aborter
+{
+	void abort() const noexcept
+	{
+		std::abort();
 	}
 };
 

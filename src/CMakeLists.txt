@@ -29,6 +29,7 @@ target_link_libraries(
 	yaml-cpp::yaml-cpp
 	etl::etl
 	std::mdspan
+	fmt::fmt
 )
 
 target_compile_definitions(

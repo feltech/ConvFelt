@@ -5,6 +5,7 @@
 #include <algorithm>
 #include <cstddef>
 #include <cstdint>
+#include <hipSYCL/sycl/libkernel/multi_ptr.hpp>
 #include <span>
 
 #include <etl/private/to_string_helper.h>
@@ -44,7 +45,7 @@ const TIString & to_string(
 // NOTE: must come _after_ custom formatters.
 #include <etl/to_string.h>
 
-namespace felt2
+namespace felt2::device
 {
 
 template <typename T>
@@ -52,6 +53,10 @@ auto make_unique_sycl(
 	std::size_t count, sycl::device const & dev, sycl::context const & ctx, auto &&... args)
 {
 	auto * mem_region = sycl::malloc_shared<T>(count, dev, ctx);
+	if (!mem_region)
+	{
+		throw std::runtime_error{"make_unique_sycl: sycl::malloc_shared failed"};
+	}
 	auto deleter = [ctx](T * ptr) { sycl::free(ptr, ctx); };
 	auto ptr = std::unique_ptr<T, decltype(deleter)>{mem_region, std::move(deleter)};
 
@@ -97,10 +102,36 @@ template <typename T>
 using unique_sycl_array_t =
 	decltype(make_unique_sycl_array<T>(std::declval<sycl::queue>(), std::declval<std::size_t>()));
 
-}  // namespace felt2
+}  // namespace felt2::device
 
-namespace felt2::components
+namespace felt2::components::device
 {
+using felt2::device::make_unique_sycl;
+using felt2::device::make_unique_sycl_array;
+using felt2::device::unique_sycl_array_t;
+
+template <HasLog Logger, HasAbort Aborter>
+struct Context
+{
+	Logger m_logger_impl;
+	Aborter m_aborter_impl;
+	sycl::device m_dev;
+	sycl::context m_ctx;
+
+	auto& logger(this auto & self) {
+		return self.m_logger_impl;
+	}
+	auto& aborter(this auto & self) {
+		return self.m_aborter_impl;
+	}
+	auto& device(this auto & self) {
+		return self.m_dev;
+	}
+	auto& context(this auto & self) {
+		return self.m_ctx;
+	}
+};
+
 
 template <HasLeafType Traits>
 struct USMRawArray
@@ -181,17 +212,19 @@ struct Log
 		unique_sycl_array_t<etl::string_ext> str_data;
 		std::span<etl::string_ext> strs;
 	};
-	inline static Storage const null_storage{nullptr, nullptr, {}};
 
-	std::span<etl::string_ext> strs_;
-	mutable sycl::private_ptr<std::size_t const> stream_id_;
+	std::span<etl::string_ext> strs;
+	mutable sycl::private_ptr<std::size_t const> stream_id;
 
 	template <class... Args>
 	constexpr bool log(Args &&... args) const noexcept
 	{
-		std::size_t const stream_idx = stream_id_ ? *stream_id_ : 0;
+		if (strs.empty())
+			return false;
 
-		etl::string_ext & str = strs_[stream_idx % strs_.size()];
+		std::size_t const stream_idx = stream_id ? *stream_id : 0;
+
+		etl::string_ext & str = strs[stream_idx % strs.size()];
 
 		(
 			[&]
@@ -213,22 +246,22 @@ struct Log
 
 	[[nodiscard]] constexpr bool has_logs() const noexcept
 	{
-		return !std::ranges::all_of(strs_, [](auto const & str) { return str.empty(); });
+		return !std::ranges::all_of(strs, [](auto const & str) { return str.empty(); });
 	}
 
 	[[nodiscard]] constexpr std::string_view text(std::size_t const stream_idx) const noexcept
 	{
-		return std::string_view{strs_[stream_idx].data(), strs_[stream_idx].size()};
+		return std::string_view{strs[stream_idx].data(), strs[stream_idx].size()};
 	}
 
 	void set_storage(Storage const & storage)
 	{
-		strs_ = storage.strs;
+		strs = storage.strs;
 	}
 
-	void set_stream(std::size_t const * stream_id) const
+	void set_stream(std::size_t const * id) const
 	{
-		stream_id_ = stream_id;
+		stream_id = id;
 	}
 
 	[[nodiscard]] static Storage make_storage(
@@ -251,4 +284,19 @@ struct Log
 		return storage;
 	}
 };
-}  // namespace felt2::components
+
+struct Aborter
+{
+	void abort() const noexcept
+	{
+#ifndef FELT2_DEBUG_NONFATAL
+		// TODO(DF): Need a less vendor-specific solution. AdaptiveCpp generic JIT backend is
+		//  __SYCL_SINGLE_SOURCE__ yet provides (as below) vendor-soecific macros to target code to
+		//  host vs. device.
+		__hipsycl_if_target_device(asm("trap;"));
+		__hipsycl_if_target_host(std::abort());
+#endif
+	}
+};
+
+}  // namespace felt2::components::device

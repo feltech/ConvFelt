@@ -1,4 +1,5 @@
 #pragma once
+#include <cassert>
 #include <concepts>
 #include <span>
 
@@ -34,15 +35,63 @@
 
 namespace convfelt
 {
+
+using GridFlags = std::uint8_t;
+
+struct GridFlag
+{
+	enum : GridFlags
+	{
+		is_device_shared = 1 << 0,
+		is_child = 1 << 1
+	};
+};
+
+template <GridFlags flags>
+using host_or_device_context_t = std::conditional_t<
+	static_cast<bool>(flags & GridFlag::is_device_shared),
+	// device grid
+	felt2::components::device::
+		Context<felt2::components::device::Log, felt2::components::device::Aborter>,
+	// host grid
+	felt2::components::Context<felt2::components::Log, felt2::components::Aborter>>;
+
+template <class T, GridFlags flags>
+using ref_if_child_t =
+	std::conditional_t<static_cast<bool>(flags & GridFlag::is_child), std::reference_wrapper<T>, T>;
+
+constexpr decltype(auto) unwrap_ref(auto && maybe_wrapped)
+{
+	return static_cast<std::add_lvalue_reference_t<
+		std::unwrap_reference_t<std::remove_reference_t<decltype(maybe_wrapped)>>>>(maybe_wrapped);
+}
+
+auto make_host_context()
+{
+	return felt2::components::Context{felt2::components::Log{}, felt2::components::Aborter{}};
+}
+
+auto make_device_context(sycl::device const & dev, sycl::context const & ctx)
+{
+	return felt2::components::device::Context{
+		felt2::components::device::Log{}, felt2::components::device::Aborter{}, dev, ctx};
+}
+
+auto make_device_context(sycl::queue const & queue)
+{
+	return make_device_context(queue.get_device(), queue.get_context());
+}
+
 class USMMatrix
 {
 	struct Traits
 	{
 		using Leaf = felt2::Scalar;
 	};
-	using StorageImpl = felt2::components::USMRawArray<Traits>;
+	using StorageImpl = felt2::components::device::USMRawArray<Traits>;
 	using MatrixImpl = felt2::components::MatrixMap<StorageImpl>;
 	using BytesImpl = felt2::components::StorageBytes<StorageImpl>;
+
 public:
 	USMMatrix(
 		felt2::Dim const rows,
@@ -75,22 +124,23 @@ public:
 		return m_bytes_impl.bytes(std::forward<decltype(args)>(args)...);
 	}
 
-	operator MatrixImpl::Matrix() { // NOLINT(*-explicit-constructor)
+	operator MatrixImpl::Matrix()
+	{  // NOLINT(*-explicit-constructor)
 		return m_matrix_impl.matrix();
 	}
 
 private:
-
 	StorageImpl m_storage_impl;
 	BytesImpl m_bytes_impl;
 	MatrixImpl const m_matrix_impl;
 };
 
-template <typename T, felt2::Dim D, bool is_device_shared = false>
+template <typename T, felt2::Dim D, GridFlags flags = 0>
 class ByValue
 {
 public:
-	using This = ByValue<T, D>;
+	using This = ByValue<T, D, flags>;
+	static constexpr bool is_device_shared = flags & GridFlag::is_device_shared;
 
 	struct Traits
 	{
@@ -101,50 +151,58 @@ public:
 	using VecDi = felt2::VecDi<Traits::k_dims>;
 	using Leaf = typename Traits::Leaf;
 
+	using ContextImpl = host_or_device_context_t<flags>;
 	using SizeImpl = felt2::components::Size<Traits>;
 	using StorageImpl = std::conditional_t<
 		is_device_shared,
-		felt2::components::USMResizeableArray<Traits>,
+		felt2::components::device::USMResizeableArray<Traits>,
 		felt2::components::DataArray<Traits>>;
-	using LogImpl = felt2::components::Log;
 	using AssertBoundsImpl =
-		felt2::components::AssertBounds<Traits, LogImpl, SizeImpl, StorageImpl>;
+		felt2::components::AssertBounds<Traits, ContextImpl, SizeImpl, StorageImpl>;
 	using AccessImpl =
 		felt2::components::AccessByValue<Traits, SizeImpl, StorageImpl, AssertBoundsImpl>;
-	using ActivateImpl = felt2::components::Activate<Traits, SizeImpl, StorageImpl, LogImpl>;
+	using ActivateImpl = felt2::components::Activate<Traits, ContextImpl, SizeImpl, StorageImpl>;
 	using MatrixImpl = felt2::components::EigenMap<Traits, StorageImpl>;
 
 private:
+	ref_if_child_t<ContextImpl, flags> m_context_impl;
 	SizeImpl const m_size_impl;
-	LogImpl m_log_impl{};
-	AssertBoundsImpl const m_assert_bounds_impl{m_log_impl, m_size_impl, m_storage_impl};
-	AccessImpl m_access_impl{m_size_impl, m_storage_impl, m_assert_bounds_impl};
 	StorageImpl m_storage_impl;
 	ActivateImpl m_activate_impl;
+	AssertBoundsImpl const m_assert_bounds_impl{m_context_impl, m_size_impl, m_storage_impl};
+	AccessImpl m_access_impl{m_size_impl, m_storage_impl, m_assert_bounds_impl};
 	MatrixImpl const m_matrix_impl{m_storage_impl};
 
 public:
 	ByValue(
+		decltype(m_context_impl) context_,
 		const VecDi & size,
 		const VecDi & offset,
-		Leaf background,
-		sycl::context context,
-		sycl::device device)
-		requires(is_device_shared)
-		: m_size_impl{size, offset},
-		  m_storage_impl{{std::move(context), std::move(device)}},
-		  m_activate_impl{m_size_impl, m_storage_impl, m_log_impl, background}
+		Leaf background) requires(is_device_shared)
+		: m_context_impl{std::move(context_)},
+		  m_size_impl{size, offset},
+		  m_storage_impl{{context().context(), context().device()}},
+		  m_activate_impl{m_context_impl, m_size_impl, m_storage_impl, std::move(background)}
 	{
 		m_activate_impl.activate();
 	}
 
-	ByValue(const VecDi & size_, const VecDi & offset_, Leaf background_)
-		requires(!is_device_shared)
-		: m_size_impl{size_, offset_},
+	ByValue(
+		decltype(m_context_impl) context_,
+		const VecDi & size_,
+		const VecDi & offset_,
+		Leaf background_) requires(!is_device_shared)
+		: m_context_impl{std::move(context_)},
+		  m_size_impl{size_, offset_},
 		  m_storage_impl{},
-		  m_activate_impl{m_size_impl, m_storage_impl, m_log_impl, background_}
+		  m_activate_impl{m_context_impl, m_size_impl, m_storage_impl, std::move(background_)}
 	{
 		m_activate_impl.activate();
+	}
+
+	auto & context(this auto & self) noexcept
+	{
+		return unwrap_ref(self.m_context_impl);
 	}
 
 	decltype(auto) storage(auto &&... args) noexcept
@@ -199,33 +257,18 @@ public:
 	{
 		return m_matrix_impl.matrix(std::forward<decltype(args)>(args)...);
 	}
-	decltype(auto) log(auto &&... args) const noexcept
-	{
-		return m_log_impl.log(std::forward<decltype(args)>(args)...);
-	}
-	decltype(auto) text(auto &&... args) const noexcept
-	{
-		return m_log_impl.text(std::forward<decltype(args)>(args)...);
-	}
-	decltype(auto) set_log_storage(auto &&... args) noexcept
-	{
-		return m_log_impl.set_storage(std::forward<decltype(args)>(args)...);
-	}
-	decltype(auto) has_logs(auto &&... args) const noexcept
-	{
-		return m_log_impl.has_logs(std::forward<decltype(args)>(args)...);
-	}
 };
 
 template <typename T, felt2::Dim D>
 using InputGridTD = ByValue<T, D>;
 using InputGrid = InputGridTD<felt2::Scalar, 3>;
 
-template <typename T, felt2::Dim D, bool is_device_shared = false>
+template <typename T, felt2::Dim D, GridFlags flags = 0>
 class ByRef
 {
 public:
-	using This = ByRef<T, D>;
+	using This = ByRef<T, D, flags>;
+	static constexpr bool is_device_shared = flags & GridFlag::is_device_shared;
 
 	struct Traits
 	{
@@ -239,47 +282,54 @@ public:
 	using SizeImpl = felt2::components::Size<Traits>;
 	using StorageImpl = std::conditional_t<
 		is_device_shared,
-		felt2::components::USMResizeableArray<Traits>,
+		felt2::components::device::USMResizeableArray<Traits>,
 		felt2::components::DataArray<Traits>>;
-	using LogImpl = felt2::components::Log;
+	using ContextImpl = host_or_device_context_t<flags>;
 	using AssertBoundsImpl =
-		felt2::components::AssertBounds<Traits, LogImpl, SizeImpl, StorageImpl>;
+		felt2::components::AssertBounds<Traits, ContextImpl, SizeImpl, StorageImpl>;
 	using AccessImpl =
 		felt2::components::AccessByRef<Traits, SizeImpl, StorageImpl, AssertBoundsImpl>;
-	using ActivateImpl = felt2::components::Activate<Traits, SizeImpl, StorageImpl, LogImpl>;
+	using ActivateImpl = felt2::components::Activate<Traits, ContextImpl, SizeImpl, StorageImpl>;
 
 private:
-	SizeImpl const m_size_impl;
-	LogImpl m_log_impl{};
-	AssertBoundsImpl const m_assert_bounds_impl{m_log_impl, m_size_impl, m_storage_impl};
-	AccessImpl m_access_impl{m_size_impl, m_storage_impl, m_assert_bounds_impl};
+	ref_if_child_t<ContextImpl, flags> m_context_impl;
+	SizeImpl m_size_impl;
 	StorageImpl m_storage_impl;
 	ActivateImpl m_activate_impl;
+	AssertBoundsImpl const m_assert_bounds_impl{m_context_impl, m_size_impl, m_storage_impl};
+	AccessImpl m_access_impl{m_size_impl, m_storage_impl, m_assert_bounds_impl};
 
 public:
 	ByRef(
-		const VecDi & size_,
-		const VecDi & offset_,
-		Leaf background_,
-		sycl::context context,
-		sycl::device device)
-		requires(is_device_shared)
-		: m_size_impl{size_, offset_},
-		  m_storage_impl{{std::move(context), std::move(device)}},
-		  m_activate_impl{m_size_impl, m_storage_impl, m_log_impl, background_}
+		decltype(m_context_impl) context_,
+		VecDi const & size_,
+		VecDi const & offset_,
+		Leaf background_) requires(is_device_shared)
+		: m_context_impl{std::move(context_)},
+		  m_size_impl{size_, offset_},
+		  m_storage_impl{{context().context(), context().device()}},
+		  m_activate_impl{m_context_impl, m_size_impl, m_storage_impl, background_}
 	{
 		m_activate_impl.activate();
 	}
 
-	ByRef(const VecDi & size_, const VecDi & offset_, Leaf background_)
-		requires(!is_device_shared)
-		: m_size_impl{size_, offset_},
+	ByRef(
+		decltype(m_context_impl) context_,
+		VecDi const & size_,
+		VecDi const & offset_,
+		Leaf background_) requires(!is_device_shared)
+		: m_context_impl{std::move(context_)},
+		  m_size_impl{size_, offset_},
 		  m_storage_impl{},
-		  m_activate_impl{m_size_impl, m_storage_impl, m_log_impl, background_}
+		  m_activate_impl{m_context_impl, m_size_impl, m_storage_impl, background_}
 	{
 		m_activate_impl.activate();
 	}
 
+	auto & context(this auto & self) noexcept
+	{
+		return unwrap_ref(self.m_context_impl);
+	}
 	decltype(auto) storage(auto &&... args) noexcept
 	{
 		return m_storage_impl.storage(std::forward<decltype(args)>(args)...);
@@ -316,33 +366,13 @@ public:
 	{
 		return m_size_impl.size(std::forward<decltype(args)>(args)...);
 	}
-	decltype(auto) log(auto &&... args) const noexcept
-	{
-		return m_log_impl.log(std::forward<decltype(args)>(args)...);
-	}
-	decltype(auto) text(auto &&... args) const noexcept
-	{
-		return m_log_impl.text(std::forward<decltype(args)>(args)...);
-	}
-	decltype(auto) set_log_storage(auto &&... args) noexcept
-	{
-		return m_log_impl.set_storage(std::forward<decltype(args)>(args)...);
-	}
-	decltype(auto) set_log_stream(auto &&... args) noexcept
-	{
-		return m_log_impl.set_stream(std::forward<decltype(args)>(args)...);
-	}
-	decltype(auto) has_logs(auto &&... args) const noexcept
-	{
-		return m_log_impl.has_logs(std::forward<decltype(args)>(args)...);
-	}
 };
 
-template <typename T, felt2::Dim D>
+template <typename T, felt2::Dim D, GridFlags flags = 0>
 class FilterTD
 {
 public:
-	using This = FilterTD<T, D>;
+	using This = FilterTD<T, D, flags>;
 
 	struct Traits
 	{
@@ -355,43 +385,40 @@ public:
 
 	using SizeImpl = felt2::components::ResizableSize<Traits>;
 	using StorageImpl = felt2::components::DataArraySpan<Traits>;
-	using LogImpl = felt2::components::Log;
+	using ContextImpl = host_or_device_context_t<flags>;
 	using AssertBoundsImpl =
-		felt2::components::AssertBounds<Traits, LogImpl, SizeImpl, StorageImpl>;
+		felt2::components::AssertBounds<Traits, ContextImpl, SizeImpl, StorageImpl>;
 	using AccessImpl =
 		felt2::components::AccessByValue<Traits, SizeImpl, StorageImpl, AssertBoundsImpl>;
 	using MatrixImpl = felt2::components::EigenMap<Traits, StorageImpl>;
 
 private:
+	ref_if_child_t<ContextImpl, flags> m_context_impl;
 	SizeImpl m_size_impl;
 	StorageImpl m_storage_impl{};
-	LogImpl m_log_impl{};
-	AssertBoundsImpl const m_assert_bounds_impl{m_log_impl, m_size_impl, m_storage_impl};
+	AssertBoundsImpl m_assert_bounds_impl{m_context_impl, m_size_impl, m_storage_impl};
 	AccessImpl m_access_impl{m_size_impl, m_storage_impl, m_assert_bounds_impl};
-	MatrixImpl const m_matrix_impl{m_storage_impl};
+	MatrixImpl m_matrix_impl{m_storage_impl};
 
 public:
-	explicit FilterTD(SizeImpl size_impl) : m_size_impl{std::move(size_impl)} {}
+	FilterTD(decltype(m_context_impl) context_, SizeImpl size_impl)
+		: m_context_impl{std::move(context_)}, m_size_impl{std::move(size_impl)}
+	{
+	}
 
+	// Note: reference semantics mean we can't blindly copy `other` - reference_wrappers for e.g.
+	// storage would still point to the original instance.
 	FilterTD(This const & other)
-		: m_size_impl{other.m_size_impl},
+		: m_context_impl{other.m_context_impl},
+		  m_size_impl{other.m_size_impl},
 		  m_storage_impl{other.m_storage_impl},
-		  m_log_impl{other.m_log_impl},
-		  m_assert_bounds_impl{m_log_impl, m_size_impl, m_storage_impl},
+		  m_assert_bounds_impl{m_context_impl, m_size_impl, m_storage_impl},
 		  m_access_impl{m_size_impl, m_storage_impl, m_assert_bounds_impl},
 		  m_matrix_impl{m_storage_impl}
 	{
 	}
 
-	FilterTD(This && other) noexcept
-		: m_size_impl{std::move(other.m_size_impl)},
-		  m_storage_impl{std::move(other.m_storage_impl)},
-		  m_log_impl{std::move(other.m_log_impl)},
-		  m_assert_bounds_impl{m_log_impl, m_size_impl, m_storage_impl},
-		  m_access_impl{m_size_impl, m_storage_impl, m_assert_bounds_impl},
-		  m_matrix_impl{m_storage_impl}
-	{
-	}
+	explicit FilterTD(This && other) noexcept = default;
 
 	decltype(auto) storage(auto &&... args) noexcept
 	{
@@ -461,11 +488,12 @@ public:
 
 using Filter = FilterTD<felt2::Scalar, 3>;
 
-template <typename T, felt2::Dim D, bool is_device_shared = false>
+template <typename T, felt2::Dim D, GridFlags flags = 0>
 class ConvGridTD
 {
 public:
-	using This = ConvGridTD<T, D, is_device_shared>;
+	using This = ConvGridTD<T, D, flags>;
+	static constexpr bool is_device_shared = flags & GridFlag::is_device_shared;
 
 	struct Traits
 	{
@@ -475,40 +503,43 @@ public:
 
 	using VecDi = felt2::VecDi<Traits::k_dims>;
 	using Leaf = typename Traits::Leaf;
-	using Child = FilterTD<Leaf, Traits::k_dims>;
-	using ChildrenGrid = ByRef<Child, Traits::k_dims, is_device_shared>;
+	using Child = FilterTD<Leaf, Traits::k_dims, flags | GridFlag::is_child>;
+	using ChildrenGrid = ByRef<Child, Traits::k_dims, flags | GridFlag::is_child>;
 
+	using ContextImpl = host_or_device_context_t<flags>;
 	using SizeImpl = felt2::components::Size<Traits>;
 	using ChildrenSizeImpl = felt2::components::ChildrenSize<Traits, SizeImpl>;
 	using StorageImpl = std::conditional_t<
 		is_device_shared,
-		felt2::components::USMResizeableArray<Traits>,
+		felt2::components::device::USMResizeableArray<Traits>,
 		felt2::components::DataArray<Traits>>;
 	using BytesImpl = felt2::components::StorageBytes<StorageImpl>;
-	using LogImpl = felt2::components::Log;
 	using AssertBoundsImpl =
-		felt2::components::AssertBounds<Traits, LogImpl, SizeImpl, StorageImpl>;
+		felt2::components::AssertBounds<Traits, ContextImpl, SizeImpl, StorageImpl>;
 	using MatrixImpl = felt2::components::MatrixColPerChild<Traits, StorageImpl, ChildrenSizeImpl>;
 
 private:
+	ref_if_child_t<ContextImpl, flags> m_context_impl;
 	StorageImpl m_storage_impl;
 	SizeImpl const m_size_impl;
 	ChildrenSizeImpl const m_children_size_impl;
-	LogImpl m_log_impl{};
 	BytesImpl m_bytes_impl{m_storage_impl};
-	AssertBoundsImpl const m_assert_bounds_impl{m_log_impl, m_size_impl, m_storage_impl};
+	AssertBoundsImpl m_assert_bounds_impl{m_context_impl, m_size_impl, m_storage_impl};
 	MatrixImpl m_matrix_impl{m_storage_impl, m_children_size_impl};
 
 	ChildrenGrid m_children;
 
 public:
-	ConvGridTD(const VecDi & size_, const felt2::VecDi<D - 1> & child_window_)
-		: ConvGridTD{size_, window_to_size(child_window_, size_), {0, 0, 0}}
+	ConvGridTD(
+		decltype(m_context_impl) context_,
+		VecDi const & size_,
+		felt2::VecDi<D - 1> const & child_window_)
+		: ConvGridTD{std::move(context_), size_, window_to_size(child_window_, size_), {0, 0, 0}}
 	{
 	}
 
-	ConvGridTD(const VecDi & size_, const VecDi & child_size_)
-		: ConvGridTD{size_, child_size_, {0, 0, 0}}
+	ConvGridTD(decltype(m_context_impl) context_, const VecDi & size_, const VecDi & child_size_)
+		: ConvGridTD{context_, size_, child_size_, {0, 0, 0}}
 	{
 		assert(
 			size_(D - 1) == child_size_(D - 1) &&
@@ -516,28 +547,40 @@ public:
 	}
 
 	ConvGridTD(
-		const VecDi & size_,
-		const felt2::VecDi<D - 1> & child_window_,
-		sycl::context const & context,
-		sycl::device const & device)
-		requires(is_device_shared)
-		: m_storage_impl{{context, device}},
+		decltype(m_context_impl) context_,
+		VecDi const & size_,
+		felt2::VecDi<D - 1> const & child_window_) requires(is_device_shared)
+		: m_context_impl{std::move(context_)},
+		  m_storage_impl{{context().context(), context().device()}},
 		  m_size_impl{size_, {0, 0, 0}},
 		  m_children_size_impl{m_size_impl, window_to_size(child_window_, m_size_impl.size())},
 		  m_children{m_children_size_impl.template make_children_span<decltype(m_children)>(
-			  m_storage_impl, Child{{VecDi::Zero(), VecDi::Zero()}}, context, device)}
+			  m_context_impl,
+			  m_storage_impl,
+			  Child{m_context_impl, {VecDi::Zero(), VecDi::Zero()}})}
 	{
 		assert_child_size();
 	}
 
-	ConvGridTD(const VecDi & size_, const VecDi & child_size_, const VecDi & offset_)
-		requires(!is_device_shared)
-		: m_size_impl{size_, offset_},
+	ConvGridTD(
+		decltype(m_context_impl) context_,
+		VecDi const & size_,
+		VecDi const & child_size_,
+		VecDi const & offset_) requires(!is_device_shared)
+		: m_context_impl{std::move(context_)},
+		  m_size_impl{size_, offset_},
 		  m_children_size_impl{m_size_impl, child_size_},
 		  m_children{m_children_size_impl.template make_children_span<decltype(m_children)>(
-			  m_storage_impl, Child{{VecDi::Zero(), VecDi::Zero()}})}
+			  m_context_impl,
+			  m_storage_impl,
+			  Child{m_context_impl, {VecDi::Zero(), VecDi::Zero()}})}
 	{
 		assert_child_size();
+	}
+
+	auto & context(this auto & self) noexcept
+	{
+		return unwrap_ref(self.m_context_impl);
 	}
 
 	const ChildrenGrid & children() const noexcept
@@ -590,28 +633,6 @@ public:
 	{
 		return m_matrix_impl.matrix(std::forward<decltype(args)>(args)...);
 	}
-	decltype(auto) log(auto &&... args) const noexcept
-	{
-		return m_log_impl.log(std::forward<decltype(args)>(args)...);
-	}
-	decltype(auto) text(auto &&... args) const noexcept
-	{
-		return m_log_impl.text(std::forward<decltype(args)>(args)...);
-	}
-	decltype(auto) set_log_storage(auto &&... args) noexcept
-	{
-		m_children.set_log_storage(std::forward<decltype(args)>(args)...);
-		return m_log_impl.set_storage(std::forward<decltype(args)>(args)...);
-	}
-	decltype(auto) set_log_stream(auto &&... args) noexcept
-	{
-		m_children.set_log_stream(std::forward<decltype(args)>(args)...);
-		return m_log_impl.set_stream(std::forward<decltype(args)>(args)...);
-	}
-	decltype(auto) has_logs(auto &&... args) const noexcept
-	{
-		return m_log_impl.has_logs(std::forward<decltype(args)>(args)...);
-	}
 
 private:
 	void assert_child_size()
@@ -632,11 +653,12 @@ private:
 
 using ConvGrid = ConvGridTD<felt2::Scalar, 3>;
 
-template <typename T, felt2::Dim D, bool is_device_shared = false>
+template <typename T, felt2::Dim D, GridFlags flags = 0>
 class TemplateParentGridTD
 {
 public:
-	using This = TemplateParentGridTD<T, D>;
+	using This = TemplateParentGridTD<T, D, flags>;
+	static constexpr bool is_device_shared = flags & GridFlag::is_device_shared;
 
 	struct Traits
 	{
@@ -646,25 +668,33 @@ public:
 
 	using VecDi = felt2::VecDi<Traits::k_dims>;
 	using Leaf = typename Traits::Leaf;
-	using Child = FilterTD<Leaf, Traits::k_dims>;
-	using ChildrenGrid = ByRef<Child, Traits::k_dims, is_device_shared>;
+
+	using ContextImpl = host_or_device_context_t<flags>;
+	using Child = FilterTD<Leaf, Traits::k_dims, flags | GridFlag::is_child>;
+	using ChildrenGrid = ByRef<Child, Traits::k_dims, flags | GridFlag::is_child>;
 
 	using SizeImpl = felt2::components::Size<Traits>;
 	using ChildrenSizeImpl = felt2::components::ChildrenSize<Traits, SizeImpl>;
 
 private:
-	SizeImpl const m_size_impl;
-	ChildrenSizeImpl const m_children_size_impl;
+	ref_if_child_t<ContextImpl, flags> m_context_impl;
+	SizeImpl m_size_impl;
+	ChildrenSizeImpl m_children_size_impl;
 	ChildrenGrid m_children;
 
 public:
-	TemplateParentGridTD(const VecDi & size_, const felt2::VecDi<D - 1> & child_window_)
-		: TemplateParentGridTD{size_, window_to_size(child_window_, size_), {0, 0, 0}}
+	TemplateParentGridTD(
+		decltype(m_context_impl) context_,
+		const VecDi & size_,
+		const felt2::VecDi<D - 1> & child_window_)
+		: TemplateParentGridTD{
+			  std::move(context_), size_, window_to_size(child_window_, size_), {0, 0, 0}}
 	{
 	}
 
-	TemplateParentGridTD(const VecDi & size_, const VecDi & child_size_)
-		: TemplateParentGridTD{size_, child_size_, {0, 0, 0}}
+	TemplateParentGridTD(
+		decltype(m_context_impl) context_, const VecDi & size_, const VecDi & child_size_)
+		: TemplateParentGridTD{std::move(context_), size_, child_size_, {0, 0, 0}}
 	{
 		assert(
 			size_(D - 1) == child_size_(D - 1) &&
@@ -672,28 +702,37 @@ public:
 	}
 
 	TemplateParentGridTD(
+		decltype(m_context_impl) context_,
 		const VecDi & size_,
-		const felt2::VecDi<D - 1> & child_window_,
-		sycl::context const & context,
-		sycl::device const & device)
-		requires(is_device_shared)
-		: m_size_impl{size_, {0, 0, 0}},
+		const felt2::VecDi<D - 1> & child_window_) requires(is_device_shared)
+		: m_context_impl{std::move(context_)},
+		  m_size_impl{size_, {0, 0, 0}},
 		  m_children_size_impl{m_size_impl, window_to_size(child_window_, m_size_impl.size())},
 		  m_children{m_children_size_impl.template make_empty_children<decltype(m_children)>(
-			  Child{{VecDi::Zero(), VecDi::Zero()}}, context, device)}
+			  context(), Child{context(), {VecDi::Zero(), VecDi::Zero()}})}
 	{
 		assert_child_size();
 	}
 
-	TemplateParentGridTD(const VecDi & size_, const VecDi & child_size_, const VecDi & offset_)
-		requires(!is_device_shared)
-		: m_size_impl{size_, offset_},
+	TemplateParentGridTD(
+		decltype(m_context_impl) context_,
+		const VecDi & size_,
+		const VecDi & child_size_,
+		const VecDi & offset_) requires(!is_device_shared)
+		: m_context_impl{std::move(context_)},
+		  m_size_impl{size_, offset_},
 		  m_children_size_impl{m_size_impl, child_size_},
 		  m_children{m_children_size_impl.template make_empty_children<decltype(m_children)>(
 			  Child{{VecDi::Zero(), VecDi::Zero()}})}
 	{
 		assert_child_size();
 	}
+
+	auto & context(this auto & self) noexcept
+	{
+		return unwrap_ref(self.m_context_impl);
+	}
+
 	const ChildrenGrid & children() const noexcept
 	{
 		return m_children;
