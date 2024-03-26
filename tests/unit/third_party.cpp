@@ -1,29 +1,32 @@
 #define EIGEN_DEFAULT_IO_FORMAT Eigen::IOFormat(3, DontAlignCols, " ", ",", "", "", "(", ")")
 
-#include <ranges>
+#include <algorithm>
+#include <cassert>
+#include <cmath>
+#include <cstddef>
+#include <cstdint>
+#include <exception>
+#include <format>
+#include <iterator>
 #include <span>
+#include <string_view>
+#include <utility>
+#include <vector>
 
-#include <experimental/mdarray>
+#include <Eigen/Core>
+#include <OpenImageIO/typedesc.h>
+#include <catch2/catch_message.hpp>
+#include <etl/string.h>
+#include <experimental/mdspan>  // NOLINT(misc-include-cleaner)
+#include <fmt/format.h>
+#include <oneapi/mkl/blas.hpp>
+#include <oneapi/mkl/types.hpp>
 #include <sycl/sycl.hpp>
-// namespace sycl
-//{
-//// Required for MKL.
-// template <typename... Args>
-// using span = std::span<Args...>;
-// }  // namespace sycl
-#include <oneapi/mkl.hpp>
-namespace stdex = std::experimental;
 
-// Eigen
-//   * OpenSYCL (hipSYCL) not supported because missing `isinf` and `isfinite` builtins. So must
-//     #undef SYCL_DEVICE_ONLY (which probably shouldn't be set by OpenSYCL, but it is).
-//   * Luckily CUDA/HIP are also supported.
-//     TODO(DF): but is the CUDA/HIP optimized code path actually used in the device kernels?
-// Required for Eigen.
-#ifdef SYCL_DEVICE_ONLY
-#define was_SYCL_DEVICE_ONLY SYCL_DEVICE_ONLY
-// #undef SYCL_DEVICE_ONLY
-#else
+#include "convfelt/felt2/components/sycl.hpp"
+#include "convfelt/felt2/index.hpp"
+
+namespace stdex = std::experimental;
 
 // Eigen 3.4.0 (fixed in master) has a workaround for SYCL where it wraps min/max functions in a
 // lambda on SYCL. This appears to fix cudaErrorIllegalAddress in min/max functions - something to
@@ -32,13 +35,6 @@ namespace stdex = std::experimental;
 // #define SYCL_DEVICE_ONLY
 // #include <Eigen/src/Core/GenericPacketMath.h>
 // #undef SYCL_DEVICE_ONLY
-
-#endif
-#include <Eigen/Eigen>
-#ifdef was_SYCL_DEVICE_ONLY
-#define SYCL_DEVICE_ONLY was_SYCL_DEVICE_ONLY
-#undef was_SYCL_DEVICE_ONLY
-#endif
 
 // OpenImageIO
 #include <OpenImageIO/platform.h>
@@ -61,7 +57,6 @@ namespace stdex = std::experimental;
 #include <catch2/matchers/catch_matchers.hpp>
 #include <catch2/matchers/catch_matchers_string.hpp>
 
-#include <cppcoro/static_thread_pool.hpp>
 #include <cppcoro/sync_wait.hpp>
 #include <cppcoro/task.hpp>
 
@@ -69,23 +64,27 @@ namespace stdex = std::experimental;
 #include <convfelt/felt2/typedefs.hpp>
 #include <convfelt/iter.hpp>
 
+// NOLINTBEGIN(readability-function-cognitive-complexity)
+// NOLINTBEGIN(*-magic-numbers)
+// NOLINTBEGIN(readability-identifier-length)
+
 SCENARIO("Using OpenImageIO with cppcoro and loading into Felt grid")
 {
 	GIVEN("a simple monochrome image file")
 	{
-		static constexpr std::string_view file_path = CONVFELT_TEST_RESOURCE_DIR "/plus.png";
+		static constexpr std::string_view k_file_path = CONVFELT_TEST_RESOURCE_DIR "/plus.png";
 		using Pixel = felt2::VecDT<float, 3>;
 
 		WHEN("image file is loaded")
 		{
 			auto task = []() -> cppcoro::task<OIIO::ImageBuf>
 			{
-				OIIO::ImageBuf imageBuf{std::string{file_path}};
-				imageBuf.read();
-				co_return imageBuf;
+				OIIO::ImageBuf image_buf{std::string{k_file_path}};
+				image_buf.read();
+				co_return image_buf;
 			};
 
-			OIIO::ImageBuf image = cppcoro::sync_wait(task());
+			OIIO::ImageBuf const image = cppcoro::sync_wait(task());
 
 			THEN("file has expected properties")
 			{
@@ -193,15 +192,15 @@ SCENARIO("Using OpenImageIO with cppcoro and loading into Felt grid")
 }
 
 template <typename T>
-concept IsCallableWithGlobalPos = requires(T t)
+concept IsCallableWithGlobalPos = requires(T obj_)
 {
-	{t(std::declval<felt2::Vec3i>())};
+	{obj_(std::declval<felt2::Vec3i>())};
 };
 
 template <typename T>
-concept IsCallableWithFilterPos = requires(T t)
+concept IsCallableWithFilterPos = requires(T obj_)
 {
-	{t(std::declval<felt2::Vec3i>(), std::declval<felt2::Vec3i>())};
+	{obj_(std::declval<felt2::Vec3i>(), std::declval<felt2::Vec3i>())};
 };
 
 template <typename T>
@@ -212,14 +211,16 @@ struct FilterSizeHelper
 {
 	using VecDi = felt2::VecDi<D>;
 
-	VecDi const filter_size;
-	VecDi const filter_stride{[]() constexpr
-							  {
-								  VecDi default_stride;
-								  default_stride.template head<D - 1>().setConstant(1);
-								  default_stride.template tail<1>().setConstant(0);
-								  return default_stride;
-							  }()};
+	VecDi filter_size;
+	VecDi filter_stride{[]() constexpr
+						{
+							// False positive:
+							// NOLINTNEXTLINE(misc-const-correctness)
+							VecDi default_stride;
+							default_stride.template head<D - 1>().setConstant(1);
+							default_stride.template tail<1>().setConstant(0);
+							return default_stride;
+						}()};
 
 	[[nodiscard]] constexpr auto num_filter_elems() const noexcept
 	{
@@ -231,37 +232,37 @@ struct FilterSizeHelper
 		return filter_size.template head<D - 1>();
 	}
 
-	[[nodiscard]] VecDi input_size_from_source_size(VecDi const & source_size) const
+	[[nodiscard]] VecDi input_size_from_source_size(VecDi const & source_size_) const
 	{
-		return input_size_from_source_and_filter_size(filter_size, filter_stride, source_size);
+		return input_size_from_source_and_filter_size(filter_size, filter_stride, source_size_);
 	}
 
-	[[nodiscard]] VecDi input_start_pos_from_filter_pos(VecDi const & filter_pos) const
+	[[nodiscard]] VecDi input_start_pos_from_filter_pos(VecDi const & filter_pos_) const
 	{
-		return (filter_pos.array() * filter_stride.array()).matrix();
+		return (filter_pos_.array() * filter_stride.array()).matrix();
 	}
 
-	[[nodiscard]] VecDi source_pos_from_input_pos(VecDi const & input_pos) const
+	[[nodiscard]] VecDi source_pos_from_input_pos(VecDi const & input_pos_) const
 	{
-		return source_pos_from_input_pos_and_filter_size(filter_size, filter_stride, input_pos);
+		return source_pos_from_input_pos_and_filter_size(filter_size, filter_stride, input_pos_);
 	}
 
-	[[nodiscard]] VecDi output_size_from_num_filter_regions(VecDi const & num_filter_regions) const
+	[[nodiscard]] VecDi output_size_from_num_filter_regions(VecDi const & num_filter_regions_) const
 	{
-		return (num_filter_regions.array() * filter_size.array()).matrix();
+		return (num_filter_regions_.array() * filter_size.array()).matrix();
 	}
 
 	void input_pos_from_source_pos(
-		VecDi const & source_size,
-		VecDi const & source_pos,
-		IsCallableWithPos auto && callback) const
+		VecDi const & source_size_,
+		VecDi const & source_pos_,
+		IsCallableWithPos auto && callback_) const
 	{
 		input_pos_from_source_pos_and_filter_size(
 			filter_size,
 			filter_stride,
-			source_size,
-			source_pos,
-			std::forward<decltype(callback)>(callback));
+			source_size_,
+			source_pos_,
+			std::forward<decltype(callback_)>(callback_));
 	}
 
 	/**
@@ -275,12 +276,12 @@ struct FilterSizeHelper
 	 * walked the source image.
 	 */
 	static VecDi num_filter_regions_from_source_and_filter_size(
-		VecDi const & filter_size, VecDi const & filter_stride, VecDi const & source_size)
+		VecDi const & filter_size_, VecDi const & filter_stride_, VecDi const & source_size_)
 	{
 		VecDi num_filter_regions = VecDi::Ones();
-		auto const source_window = source_size.template head<2>();
-		auto const filter_window = filter_size.template head<2>();
-		auto const stride_window = filter_stride.template head<2>();
+		auto const source_window = source_size_.template head<2>();
+		auto const filter_window = filter_size_.template head<2>();
+		auto const stride_window = filter_stride_.template head<2>();
 		auto output_window = num_filter_regions.template head<2>();
 		output_window += ((source_window - filter_window).array() / stride_window.array()).matrix();
 		return num_filter_regions;
@@ -296,12 +297,12 @@ struct FilterSizeHelper
 	 * @return Required size to store all filter inputs side-by-side.
 	 */
 	static VecDi input_size_from_source_and_filter_size(
-		VecDi const & filter_size, VecDi const & filter_stride, VecDi const & source_size)
+		VecDi const & filter_size_, VecDi const & filter_stride_, VecDi const & source_size_)
 	{
-		VecDi const input_per_filter_size =
-			num_filter_regions_from_source_and_filter_size(filter_size, filter_stride, source_size);
+		VecDi const input_per_filter_size = num_filter_regions_from_source_and_filter_size(
+			filter_size_, filter_stride_, source_size_);
 
-		return (input_per_filter_size.array() * filter_size.array()).matrix();
+		return (input_per_filter_size.array() * filter_size_.array()).matrix();
 	}
 
 	/**
@@ -314,12 +315,12 @@ struct FilterSizeHelper
 	 * @return
 	 */
 	static VecDi source_pos_from_input_pos_and_filter_size(
-		VecDi const & filter_size, VecDi const & filter_stride, VecDi const & input_pos)
+		VecDi const & filter_size_, VecDi const & filter_stride_, VecDi const & input_pos_)
 	{
-		VecDi const filter_id = (input_pos.array() / filter_size.array()).matrix();
-		auto filter_input_start_pos = (filter_id.array() * filter_size.array()).matrix();
-		auto filter_source_start_pos = (filter_id.array() * filter_stride.array()).matrix();
-		auto filter_local_pos = input_pos - filter_input_start_pos;
+		VecDi const filter_id = (input_pos_.array() / filter_size_.array()).matrix();
+		auto filter_input_start_pos = (filter_id.array() * filter_size_.array()).matrix();
+		auto filter_source_start_pos = (filter_id.array() * filter_stride_.array()).matrix();
+		auto filter_local_pos = input_pos_ - filter_input_start_pos;
 		auto source_pos = filter_source_start_pos + filter_local_pos;
 
 		return source_pos;
@@ -339,11 +340,11 @@ struct FilterSizeHelper
 	 * correspond to the @p source_pos position in the source image..
 	 */
 	static void input_pos_from_source_pos_and_filter_size(
-		VecDi const & filter_size,
-		VecDi const & filter_stride,
-		VecDi const & source_size,
-		VecDi const & source_pos,
-		IsCallableWithPos auto && callback)
+		VecDi const & filter_size_,
+		VecDi const & filter_stride_,
+		VecDi const & source_size_,
+		VecDi const & source_pos_,
+		IsCallableWithPos auto && callback_)
 	{
 		auto one = VecDi::Constant(1);
 		auto zero = VecDi::Constant(0);
@@ -353,10 +354,10 @@ struct FilterSizeHelper
 
 		[[maybe_unused]] auto const one_window = one.template head<D - 1>();
 		auto const zero_window = zero.template head<D - 1>();
-		auto const source_size_window = source_size.template head<D - 1>();
-		auto const source_pos_window = source_pos.template head<D - 1>();
-		auto const filter_size_window = filter_size.template head<D - 1>();
-		auto const filter_stride_window = filter_stride.template head<D - 1>();
+		auto const source_size_window = source_size_.template head<D - 1>();
+		auto const source_pos_window = source_pos_.template head<D - 1>();
+		auto const filter_size_window = filter_size_.template head<D - 1>();
+		auto const filter_stride_window = filter_stride_.template head<D - 1>();
 		auto filter_pos_first_window = filter_pos_first.template head<D - 1>();
 		auto filter_pos_last_window = filter_pos_last.template head<D - 1>();
 
@@ -379,18 +380,18 @@ struct FilterSizeHelper
 			{
 				VecDi const filter_pos{x, y, 0};
 				auto source_filter_start_pos =
-					(filter_pos.array() * filter_stride.array()).matrix();
-				auto filter_source_local_pos = source_pos - source_filter_start_pos;
-				auto input_filter_start_pos = (filter_pos.array() * filter_size.array()).matrix();
+					(filter_pos.array() * filter_stride_.array()).matrix();
+				auto filter_source_local_pos = source_pos_ - source_filter_start_pos;
+				auto input_filter_start_pos = (filter_pos.array() * filter_size_.array()).matrix();
 				auto input_pos = input_filter_start_pos + filter_source_local_pos;
 
-				if constexpr (IsCallableWithGlobalPos<decltype(callback)>)
+				if constexpr (IsCallableWithGlobalPos<decltype(callback_)>)
 				{
-					callback(input_pos);
+					callback_(input_pos);
 				}
-				else if constexpr (IsCallableWithFilterPos<decltype(callback)>)
+				else if constexpr (IsCallableWithFilterPos<decltype(callback_)>)
 				{
-					callback(filter_pos, input_pos);
+					callback_(filter_pos, input_pos);
 				}
 			}
 	}
@@ -704,7 +705,7 @@ SCENARIO("Transforming source image points to filter input grid points and vice 
 				filter_stride,
 				source_size,
 				source_pos,
-				[&](const felt2::Vec3i & pos) { input_pos_list.push_back(pos); });
+				[&](const felt2::Vec3i & pos_) { input_pos_list.push_back(pos_); });
 
 			THEN("source point maps to a single input grid point at the minimum of the input grid")
 			{
@@ -724,7 +725,7 @@ SCENARIO("Transforming source image points to filter input grid points and vice 
 				filter_stride,
 				source_size,
 				source_pos,
-				[&](const felt2::Vec3i & pos) { input_pos_list.push_back(pos); });
+				[&](const felt2::Vec3i & pos_) { input_pos_list.push_back(pos_); });
 
 			THEN("source point maps to a single input grid point at the maximum of the input grid")
 			{
@@ -744,7 +745,7 @@ SCENARIO("Transforming source image points to filter input grid points and vice 
 				filter_stride,
 				source_size,
 				source_pos,
-				[&](const felt2::Vec3i & pos) { input_pos_list.push_back(pos); });
+				[&](const felt2::Vec3i & pos_) { input_pos_list.push_back(pos_); });
 
 			THEN("source point maps to 2 separate filter inputs")
 			{
@@ -764,10 +765,10 @@ SCENARIO("Transforming source image points to filter input grid points and vice 
 				filter_stride,
 				source_size,
 				source_pos,
-				[&](const felt2::Vec3i & filter_pos, const felt2::Vec3i & global_pos)
+				[&](const felt2::Vec3i & filter_pos_, const felt2::Vec3i & global_pos_)
 				{
-					filter_pos_list.push_back(filter_pos);
-					global_pos_list.push_back(global_pos);
+					filter_pos_list.push_back(filter_pos_);
+					global_pos_list.push_back(global_pos_);
 				});
 
 			THEN("source point maps to a single position in a filter input")
@@ -785,8 +786,8 @@ SCENARIO("Input/output ConvGrids")
 {
 	GIVEN("a simple monochrome image file loaded with 1 pixel of zero padding")
 	{
-		static constexpr std::string_view file_path = CONVFELT_TEST_RESOURCE_DIR "/plus.png";
-		OIIO::ImageBuf image{std::string{file_path}};
+		static constexpr std::string_view k_file_path = CONVFELT_TEST_RESOURCE_DIR "/plus.png";
+		OIIO::ImageBuf image{std::string{k_file_path}};
 		image.read();
 		auto image_grid_spec = image.spec();
 		image_grid_spec.width += 2;
@@ -820,7 +821,7 @@ SCENARIO("Input/output ConvGrids")
 					filter_input_sizer.input_start_pos_from_filter_pos(
 						filter_input_grid.children().index(filter_pos_idx));
 
-				for (felt2::PosIdx local_pos_idx : convfelt::iter::pos_idx(filter))
+				for (felt2::PosIdx const local_pos_idx : convfelt::iter::pos_idx(filter))
 				{
 					const felt2::Vec3i input_pos =
 						input_pos_start + felt2::index(local_pos_idx, filter.size());
@@ -869,18 +870,18 @@ SCENARIO("Input/output ConvGrids")
 	}
 }
 
-void async_handler(sycl::exception_list error_list)
+void async_handler(sycl::exception_list error_list_)
 {
-	if (error_list.size() > 0)
+	if (!error_list_.empty())
 	{
 		std::string errors;
-		for (std::size_t idx = 0; idx < error_list.size(); ++idx)
+		for (std::size_t idx = 0; idx < error_list_.size(); ++idx)
 		{
 			try
 			{
-				if (error_list[idx])
+				if (error_list_[idx])
 				{
-					std::rethrow_exception(error_list[idx]);
+					std::rethrow_exception(error_list_[idx]);
 				}
 			}
 			catch (std::exception & e)
@@ -901,16 +902,16 @@ SCENARIO("Basic SyCL usage")
 {
 	GIVEN("Input vectors")
 	{
-		std::vector<float> a = {1.f, 2.f, 3.f, 4.f, 5.f};
-		std::vector<float> b = {-1.f, 2.f, -3.f, 4.f, -5.f};
+		std::vector<float> a = {1.F, 2.F, 3.F, 4.F, 5.F};
+		std::vector<float> b = {-1.F, 2.F, -3.F, 4.F, -5.F};
 		std::vector<float> c(a.size());
 		assert(a.size() == b.size());
-		sycl::queue q{sycl::gpu_selector_v, &async_handler};
+		sycl::queue queue{sycl::gpu_selector_v, &async_handler};  // NOLINT(misc-const-correctness)
 
 		WHEN("vectors are added using sycl")
 		{
 			using Allocator = sycl::usm_allocator<float, sycl::usm::alloc::shared>;
-			std::vector<float, Allocator> vals(Allocator{q});
+			std::vector<float, Allocator> vals(Allocator{queue});
 			{
 				sycl::range<1> work_items{a.size()};
 				sycl::buffer<float> buff_a(a.data(), a.size());
@@ -920,23 +921,27 @@ SCENARIO("Basic SyCL usage")
 				vals.push_back(1);
 				vals.push_back(2);
 
-				q.submit(
-					[&](sycl::handler & cgh)
+				queue.submit(
+					[&](sycl::handler & cgh_)
 					{
-						auto access_a = buff_a.get_access<sycl::access::mode::read>(cgh);
-						auto access_b = buff_b.get_access<sycl::access::mode::read>(cgh);
-						auto access_c = buff_c.get_access<sycl::access::mode::write>(cgh);
+						auto access_a = buff_a.get_access<sycl::access::mode::read>(cgh_);
+						auto access_b = buff_b.get_access<sycl::access::mode::read>(cgh_);
+						auto access_c = buff_c.get_access<sycl::access::mode::write>(cgh_);
 
-						cgh.parallel_for<class vector_add>(
+						cgh_.parallel_for<class vector_add>(
 							work_items,
-							[=, data = vals.data()](sycl::id<1> tid)
-							{ access_c[tid] = access_a[tid] + access_b[tid] + data[0] + data[1]; });
+							[=, data = vals.data()](sycl::id<1> tid_)
+							{
+								access_c[tid_] =
+									// NOLINTNEXTLINE(*-pro-bounds-pointer-arithmetic)
+									access_a[tid_] + access_b[tid_] + data[0] + data[1];
+							});
 					});
-				q.wait_and_throw();
+				queue.wait_and_throw();
 			}
 			THEN("result is as expected")
 			{
-				std::vector<float> expected = {3.f, 7.f, 3.f, 11.f, 3.f};
+				std::vector<float> expected = {3.F, 7.F, 3.F, 11.F, 3.F};
 
 				CHECK(c == expected);
 			}
@@ -946,27 +951,27 @@ SCENARIO("Basic SyCL usage")
 		{
 			using Allocator = sycl::usm_allocator<float, sycl::usm::alloc::shared>;
 			auto vals = felt2::device::make_unique_sycl<std::vector<float, Allocator>>(
-				q.get_device(), q.get_context(), Allocator{q});
+				queue.get_device(), queue.get_context(), Allocator{queue});
 			vals->push_back(1);
 			vals->push_back(2);
 			sycl::range<1> work_items{vals->size()};
-			q.submit(
-				[&](sycl::handler & cgh)
+			queue.submit(
+				[&](sycl::handler & cgh_)
 				{
-					cgh.parallel_for<class vector_double>(
+					cgh_.parallel_for<class vector_double>(
 						work_items,
-						[pvals = vals.get()](sycl::id<1> tid)
+						[pvals = vals.get()](sycl::id<1> tid_)
 						{
 							auto & vals = *pvals;
-							auto const val = vals[tid];
-							vals[tid] = val * static_cast<float>(vals.size());
+							auto const val = vals[tid_];
+							vals[tid_] = val * static_cast<float>(vals.size());
 						});
 				});
-			q.wait_and_throw();
+			queue.wait_and_throw();
 
 			THEN("values have been doubled")
 			{
-				std::vector<float, Allocator> expected{Allocator{q}};
+				std::vector<float, Allocator> expected{Allocator{queue}};
 				expected.push_back(2);
 				expected.push_back(4);
 
@@ -976,19 +981,19 @@ SCENARIO("Basic SyCL usage")
 		WHEN("CUDA error")
 		{
 			using Allocator = sycl::usm_allocator<char, sycl::usm::alloc::shared>;
-			std::vector<char, Allocator> vals(Allocator{q});
-			static constexpr std::size_t buff_len = 20;
-			vals.resize(buff_len);
+			std::vector<char, Allocator> vals(Allocator{queue});
+			static constexpr std::size_t k_buff_len = 20;
+			vals.resize(k_buff_len);
 
 			sycl::range<1> work_items{vals.size()};
-			q.submit(
-				[&](sycl::handler & cgh)
+			queue.submit(
+				[&](sycl::handler & cgh_)
 				{
-					cgh.parallel_for<class vector_double>(
+					cgh_.parallel_for<class vector_double>(
 						work_items,
-						[buff = vals.data()](sycl::id<1> tid) {
+						[buff = vals.data()](sycl::id<1> tid_) {
 							std::format_to_n(
-								buff, buff_len, "Hello from thread {}", static_cast<int>(tid));
+								buff, k_buff_len, "Hello from thread {}", static_cast<int>(tid_));
 						});
 				});
 
@@ -996,7 +1001,7 @@ SCENARIO("Basic SyCL usage")
 			{
 				try
 				{
-					q.wait_and_throw();
+					queue.wait_and_throw();
 					FAIL("Should have thrown");
 				}
 				catch (const std::exception & exc)
@@ -1011,31 +1016,32 @@ SCENARIO("Basic SyCL usage")
 		}
 	}
 }
+#pragma clang diagnostic pop
 
 SCENARIO("Basic oneMKL usage")
 {
 	GIVEN("Input vectors")
 	{
-		std::vector<float> a = {1.f, 2.f, 3.f, 4.f, 5.f};
-		std::vector<float> b = {-1.f, 2.f, -3.f, 4.f, -5.f};
+		std::vector<float> a = {1.F, 2.F, 3.F, 4.F, 5.F};
+		std::vector<float> b = {-1.F, 2.F, -3.F, 4.F, -5.F};
 		assert(a.size() == b.size());
 
 		WHEN("vectors are added using oneMKL")
 		{
 			{
-				sycl::gpu_selector selector;
-				sycl::queue q{selector, &async_handler};
+				sycl::gpu_selector const selector;
+				sycl::queue queue{selector, &async_handler};  // NOLINT(misc-const-correctness)
 				sycl::buffer<float> buff_a(a.data(), a.size());
 				sycl::buffer<float> buff_b(b.data(), b.size());
 
 				// NOTE: if a segfault happens here it's because the ERROR_MSG is nullptr, which
 				// means there are no enabled backend libraries.
 				oneapi::mkl::blas::column_major::axpy(
-					q, static_cast<long>(a.size()), 1.0f, buff_a, 1, buff_b, 1);
+					queue, static_cast<std::int64_t>(a.size()), 1.0F, buff_a, 1, buff_b, 1);
 			}
 			THEN("result is as expected")
 			{
-				std::vector<float> expected = {0.f, 4.f, 0.f, 8.f, 0.f};
+				std::vector<float> expected = {0.F, 4.F, 0.F, 8.F, 0.F};
 
 				CHECK(b == expected);
 			}
@@ -1044,18 +1050,18 @@ SCENARIO("Basic oneMKL usage")
 }
 
 template <class String, class... Args>
-void append(String & str, Args... args)
+void append(String & str_, Args... args_)
 {
 	(
 		[&]
 		{
-			if constexpr (requires { std::string_view{args}; })
+			if constexpr (requires { std::string_view{args_}; })
 			{
-				str += args;
+				str_ += args_;
 			}
 			else
 			{
-				etl::to_string(args, str, true);
+				etl::to_string(args_, str_, true);
 			}
 		}(),
 		...);
@@ -1063,23 +1069,23 @@ void append(String & str, Args... args)
 
 struct ThreadAppender
 {
-	sycl::private_ptr<std::size_t const> tid{};
+	sycl::private_ptr<std::size_t const> tid;
 
 	template <class... Args>
-	void append(etl::string_ext & str, Args... args) const
+	void append(etl::string_ext & str_, Args... args_) const
 	{
-		etl::to_string(*tid, str, true);
-		str += ": ";
+		etl::to_string(*tid, str_, true);
+		str_ += ": ";
 		(
 			[&]
 			{
-				if constexpr (requires { std::string_view{args}; })
+				if constexpr (requires { std::string_view{args_}; })
 				{
-					str += args;
+					str_ += args_;
 				}
 				else
 				{
-					etl::to_string(args, str, true);
+					etl::to_string(args_, str_, true);
 				}
 			}(),
 			...);
@@ -1090,32 +1096,34 @@ SCENARIO("Assertion and logging in SYCL")
 {
 	GIVEN("queue and work range")
 	{
-		sycl::queue q{sycl::gpu_selector_v, &async_handler};
+		sycl::queue queue{sycl::gpu_selector_v, &async_handler};  // NOLINT(misc-const-correctness)
 
-		static constexpr std::size_t num_work_items = 5;
-		static constexpr std::size_t max_msg_size = 30;
+		static constexpr std::size_t k_num_work_items = 5;
+		static constexpr std::size_t k_max_msg_size = 30;
 
-		sycl::range<1> work_items{num_work_items};
+		sycl::range<1> work_items{k_num_work_items};
 
 		using Allocator = sycl::usm_allocator<char, sycl::usm::alloc::shared>;
-		using Extents = stdex::extents<char, std::dynamic_extent, max_msg_size>;
-		std::vector<char, Allocator> text_data(num_work_items * max_msg_size, '\0', Allocator{q});
-		stdex::mdspan text_nd{text_data.data(), Extents{num_work_items}};
+		using Extents = stdex::extents<char, std::dynamic_extent, k_max_msg_size>;
+		std::vector<char, Allocator> text_data(
+			k_num_work_items * k_max_msg_size, '\0', Allocator{queue});
+		stdex::mdspan text_nd{text_data.data(), Extents{k_num_work_items}};
 
 		WHEN("a kernel with logging is executed")
 		{
-			q.submit(
-				[&](sycl::handler & cgh)
+			queue.submit(
+				[&](sycl::handler & cgh_)
 				{
-					cgh.parallel_for<class vector_add>(
+					cgh_.parallel_for<class vector_add>(
 						work_items,
-						[text_nd](sycl::id<1> tid)
+						[text_nd](sycl::id<1> tid_)
 						{
-							etl::string_ext text{&text_nd[static_cast<int>(tid), 0], max_msg_size};
-							append(text, "Hello from thread ", static_cast<int>(tid));
+							etl::string_ext text{
+								&text_nd[static_cast<int>(tid_), 0], k_max_msg_size};
+							append(text, "Hello from thread ", static_cast<int>(tid_));
 						});
 				});
-			q.wait_and_throw();
+			queue.wait_and_throw();
 			THEN("log is output")
 			{
 				for (int tid = 0; tid < text_nd.extents().extent(0); ++tid)
@@ -1128,24 +1136,25 @@ SCENARIO("Assertion and logging in SYCL")
 		}
 		WHEN("a kernel with a logger that relies on private memory is executed")
 		{
-			auto appender =
-				felt2::device::make_unique_sycl<ThreadAppender>(1, q.get_device(), q.get_context());
+			auto appender = felt2::device::make_unique_sycl<ThreadAppender>(
+				1, queue.get_device(), queue.get_context());
 
-			q.submit(
-				[&](sycl::handler & cgh)
+			queue.submit(
+				[&](sycl::handler & cgh_)
 				{
-					cgh.parallel_for<class vector_add>(
+					cgh_.parallel_for<class vector_add>(
 						work_items,
-						[text_nd, appender = appender.get()](sycl::id<1> tid)
+						[text_nd, appender = appender.get()](sycl::id<1> tid_)
 						{
-							std::size_t const tidsz = tid;
+							std::size_t const tidsz = tid_;
 							appender->tid = &tidsz;
 
-							etl::string_ext text{&text_nd[static_cast<int>(tid), 0], max_msg_size};
-							appender->append(text, "Hello from thread ", static_cast<int>(tid));
+							etl::string_ext text{
+								&text_nd[static_cast<int>(tid_), 0], k_max_msg_size};
+							appender->append(text, "Hello from thread ", static_cast<int>(tid_));
 						});
 				});
-			q.wait_and_throw();
+			queue.wait_and_throw();
 
 			THEN("log is output")
 			{
@@ -1160,23 +1169,23 @@ SCENARIO("Assertion and logging in SYCL")
 		WHEN("a kernel with a logger is executed")
 		{
 			auto storage = felt2::components::device::Log::make_storage(
-				q.get_device(), q.get_context(), work_items.get(0), 1024UL);
+				queue.get_device(), queue.get_context(), work_items.get(0), 1024UL);
 			felt2::components::device::Log logger;
 			logger.set_storage(storage);
 
-			q.submit(
-				[&](sycl::handler & cgh)
+			queue.submit(
+				[&](sycl::handler & cgh_)
 				{
-					cgh.parallel_for<class vector_add>(
+					cgh_.parallel_for<class vector_add>(
 						work_items,
-						[logger](sycl::id<1> tid)
+						[logger](sycl::id<1> tid_)
 						{
-							auto const stream_id = static_cast<std::size_t>(tid);
+							auto const stream_id = static_cast<std::size_t>(tid_);
 							logger.set_stream(&stream_id);
 							logger.log("Hello from thread ", stream_id);
 						});
 				});
-			q.wait_and_throw();
+			queue.wait_and_throw();
 			THEN("log is output")
 			{
 				for (std::size_t tid = 0; tid < work_items.get(0); ++tid)
@@ -1188,23 +1197,23 @@ SCENARIO("Assertion and logging in SYCL")
 		WHEN("a kernel logs to unexpected stream ids")
 		{
 			auto storage = felt2::components::device::Log::make_storage(
-				q.get_device(), q.get_context(), work_items.get(0), 1024UL);
+				queue.get_device(), queue.get_context(), work_items.get(0), 1024UL);
 			felt2::components::device::Log logger;
 			logger.set_storage(storage);
 
-			q.submit(
-				[&](sycl::handler & cgh)
+			queue.submit(
+				[&](sycl::handler & cgh_)
 				{
-					cgh.parallel_for<class vector_add>(
+					cgh_.parallel_for<class vector_add>(
 						work_items,
-						[logger](sycl::id<1> tid)
+						[logger](sycl::id<1> tid_)
 						{
-							auto const stream_id = static_cast<std::size_t>(2 * tid);
+							auto const stream_id = static_cast<std::size_t>(2 * tid_);
 							logger.set_stream(&stream_id);
-							logger.log("Hello from thread ", static_cast<int>(tid), "\n");
+							logger.log("Hello from thread ", static_cast<int>(tid_), "\n");
 						});
 				});
-			q.wait_and_throw();
+			queue.wait_and_throw();
 
 			THEN("log output stream is a circular buffer")
 			{
@@ -1221,19 +1230,19 @@ SCENARIO("Assertion and logging in SYCL")
 		WHEN("a kernel logs to thread-local stream and no stream is set")
 		{
 			auto storage = felt2::components::device::Log::make_storage(
-				q.get_device(), q.get_context(), work_items.get(0), 1024UL);
+				queue.get_device(), queue.get_context(), work_items.get(0), 1024UL);
 			felt2::components::device::Log logger;
 			logger.set_storage(storage);
 
-			q.submit(
-				[&](sycl::handler & cgh)
+			queue.submit(
+				[&](sycl::handler & cgh_)
 				{
-					cgh.parallel_for<class vector_add>(
+					cgh_.parallel_for<class vector_add>(
 						work_items,
-						[logger](sycl::id<1> tid)
-						{ logger.log("Hello from thread ", static_cast<int>(tid), "\n"); });
+						[logger](sycl::id<1> tid_)
+						{ logger.log("Hello from thread ", static_cast<int>(tid_), "\n"); });
 				});
-			q.wait_and_throw();
+			queue.wait_and_throw();
 
 			THEN("all logs go to stream zero")
 			{
@@ -1243,40 +1252,40 @@ SCENARIO("Assertion and logging in SYCL")
 					Catch::Matchers::StartsWith(fmt::format("Hello from thread")));
 
 				for (std::size_t tid = 1; tid < work_items.get(0); ++tid)
-					CHECK(logger.text(tid) == "");
+					CHECK(logger.text(tid).empty());
 			}
 		}
 
 		WHEN("a kernel logs to thread-local stream then again with no stream set")
 		{
 			auto storage = felt2::components::device::Log::make_storage(
-				q.get_device(), q.get_context(), work_items.get(0), 1024UL);
+				queue.get_device(), queue.get_context(), work_items.get(0), 1024UL);
 			felt2::components::device::Log logger;
 			logger.set_storage(storage);
 
-			q.submit(
-				[&](sycl::handler & cgh)
+			queue.submit(
+				[&](sycl::handler & cgh_)
 				{
-					cgh.parallel_for<class vector_add>(
+					cgh_.parallel_for<class vector_add>(
 						work_items,
-						[logger](sycl::id<1> tid)
+						[logger](sycl::id<1> tid_)
 						{
-							std::size_t const stream_id = tid.get(0);
+							std::size_t const stream_id = tid_.get(0);
 							logger.set_stream(&stream_id);
 
-							logger.log("Hello from thread ", static_cast<int>(tid), "\n");
+							logger.log("Hello from thread ", static_cast<int>(tid_), "\n");
 						});
 				});
-			q.wait_and_throw();
-			q.submit(
-				[&](sycl::handler & cgh)
+			queue.wait_and_throw();
+			queue.submit(
+				[&](sycl::handler & cgh_)
 				{
-					cgh.parallel_for<class vector_add>(
+					cgh_.parallel_for<class vector_add>(
 						work_items,
-						[logger](sycl::id<1> tid)
-						{ logger.log("Hello again from thread ", static_cast<int>(tid), "\n"); });
+						[logger](sycl::id<1> tid_)
+						{ logger.log("Hello again from thread ", static_cast<int>(tid_), "\n"); });
 				});
-			q.wait_and_throw();
+			queue.wait_and_throw();
 
 			THEN("second set of logs go to stream zero")
 			{
@@ -1299,9 +1308,9 @@ SCENARIO("SyCL with ConvGrid")
 {
 	GIVEN("Shared grid")
 	{
-		sycl::context ctx;
-		sycl::device dev{sycl::gpu_selector_v};
-		using ConvGrid = convfelt::ConvGridTD<float, 3, true>;
+		sycl::context const ctx;
+		sycl::device const dev{sycl::gpu_selector_v};
+		using ConvGrid = convfelt::ConvGridTD<float, 3, convfelt::GridFlag::is_device_shared>;
 
 		auto pgrid = felt2::device::make_unique_sycl<ConvGrid>(
 			dev,
@@ -1311,41 +1320,41 @@ SCENARIO("SyCL with ConvGrid")
 			felt2::Vec2i{2, 2});
 
 		std::fill(pgrid->storage().begin(), pgrid->storage().end(), 3);
-		REQUIRE(pgrid->children().storage().size() > 0);
+		REQUIRE(!pgrid->children().storage().empty());
 		CHECK(pgrid->children().storage().size() == 4);
 		CHECK(pgrid->children().storage()[0].storage().size() > 1);
-		CHECK(&pgrid->children().storage()[0].storage()[0] == &pgrid->storage()[0]);
+		CHECK(pgrid->children().storage()[0].storage().data() == pgrid->storage().data());
 
 		WHEN("grid data is doubled using sycl")
 		{
-			sycl::range<1> work_items{pgrid->children().storage().size()};
+			sycl::range<1> const work_items{pgrid->children().storage().size()};
 
-			sycl::queue q{ctx, dev, &async_handler};
+			sycl::queue queue{ctx, dev, &async_handler};  // NOLINT(misc-const-correctness)
 
 			[[maybe_unused]] auto const log_storage = felt2::components::device::Log::make_storage(
-				q.get_device(), q.get_context(), work_items.get(0), 1024UL);
+				queue.get_device(), queue.get_context(), work_items.get(0), 1024UL);
 			pgrid->context().logger().set_storage(log_storage);
 
-			q.submit([&](sycl::handler & cgh)
-					 { cgh.prefetch(pgrid->storage().data(), pgrid->storage().size()); });
-			q.submit(
-				[&](sycl::handler & cgh) {
-					cgh.prefetch(
+			queue.submit([&](sycl::handler & cgh_)
+						 { cgh_.prefetch(pgrid->storage().data(), pgrid->storage().size()); });
+			queue.submit(
+				[&](sycl::handler & cgh_) {
+					cgh_.prefetch(
 						pgrid->children().storage().data(), pgrid->children().storage().size());
 				});
-			q.submit(
-				[&](sycl::handler & cgh)
+			queue.submit(
+				[&](sycl::handler & cgh_)
 				{
-					cgh.parallel_for<class grid_mult>(
+					cgh_.parallel_for<class grid_mult>(
 						work_items,
-						[pgrid = pgrid.get()](sycl::id<1> tid)
+						[pgrid = pgrid.get()](sycl::id<1> tid_)
 						{
-							for (auto & val : convfelt::iter::val(pgrid->children().get(tid)))
+							for (auto & val : convfelt::iter::val(pgrid->children().get(tid_)))
 								val *= 2;
 						});
 				});
 
-			q.wait_and_throw();
+			queue.wait_and_throw();
 			THEN("result is as expected")
 			{
 				CHECK(!pgrid->context().logger().has_logs());
@@ -1357,24 +1366,24 @@ SCENARIO("SyCL with ConvGrid")
 		WHEN("out of bounds access")
 		{
 			//			sycl::device cpu_dev{sycl::cpu_selector_v};
-			sycl::range<1> work_items{pgrid->children().storage().size()};
-			sycl::queue q{ctx, dev, &async_handler};
+			sycl::range<1> const work_items{pgrid->children().storage().size()};
+			sycl::queue queue{ctx, dev, &async_handler};  // NOLINT(misc-const-correctness)
 
 			[[maybe_unused]] auto log_storage = felt2::components::device::Log::make_storage(
-				q.get_device(), q.get_context(), work_items.get(0), 1024UL);
+				queue.get_device(), queue.get_context(), work_items.get(0), 1024UL);
 			pgrid->context().logger().set_storage(log_storage);
 
-			q.submit(
-				[&](sycl::handler & cgh)
+			queue.submit(
+				[&](sycl::handler & cgh_)
 				{
-					cgh.parallel_for<class grid_mult>(
+					cgh_.parallel_for<class grid_mult>(
 						work_items,
-						[pgrid = pgrid.get()](sycl::id<1> tid)
+						[pgrid = pgrid.get()](sycl::id<1> tid_)
 						{
-							auto const log_id = static_cast<std::size_t>(tid);
+							auto const log_id = static_cast<std::size_t>(tid_);
 							pgrid->context().logger().set_stream(&log_id);
 
-							auto child_idx = static_cast<felt2::PosIdx>(tid) + 1;
+							auto child_idx = static_cast<felt2::PosIdx>(tid_) + 1;
 							pgrid->children().get(child_idx);
 						});
 				});
@@ -1382,15 +1391,15 @@ SCENARIO("SyCL with ConvGrid")
 			// Note: FELT2_DEBUG_NONFATAL macro enabled so assertion doesn't cause a kernel crash,
 			// since kernel crashes are "sticky" in CUDA and would require the whole host process to
 			// be restarted.
-			q.wait_and_throw();
+			queue.wait_and_throw();
 
 			THEN("out of bounds access is logged")
 			{
-				CHECK(pgrid->context().logger().text(0uz) == "");
-				CHECK(pgrid->context().logger().text(1uz) == "");
-				CHECK(pgrid->context().logger().text(2uz) == "");
+				CHECK(pgrid->context().logger().text(0UZ).empty());
+				CHECK(pgrid->context().logger().text(1UZ).empty());
+				CHECK(pgrid->context().logger().text(2UZ).empty());
 				CHECK(
-					pgrid->context().logger().text(3uz) ==
+					pgrid->context().logger().text(3UZ) ==
 					"AssertionError: get:  assert_pos_idx_bounds(4) i.e. (0, 0, 0) is greater than "
 					"extent 4\n");
 			}
@@ -1402,29 +1411,33 @@ SCENARIO("Applying filter to ConvGrid")
 {
 	GIVEN("a simple monochrome image file loaded with 1 pixel of zero padding")
 	{
-		static constexpr std::string_view file_path = CONVFELT_TEST_RESOURCE_DIR "/plus.png";
-		OIIO::ImageBuf image{std::string{file_path}};
+		static constexpr std::string_view k_file_path = CONVFELT_TEST_RESOURCE_DIR "/plus.png";
+		OIIO::ImageBuf image{std::string{k_file_path}}; // NOLINT(misc-const-correctness)
 		image.read();
 		auto image_grid_spec = image.spec();
 		image_grid_spec.width += 2;
 		image_grid_spec.height += 2;
 		image_grid_spec.format = OIIO::TypeDescFromC<felt2::Scalar>::value();
 
+		// False positive:
+		// NOLINTNEXTLINE(misc-const-correctness)
 		convfelt::InputGrid image_grid{
 			convfelt::make_host_context(),
 			{image.spec().height + 2, image.spec().width + 2, image_grid_spec.nchannels},
 			{0, 0, 0},
 			0};
 
+		// NOLINTNEXTLINE(misc-const-correctness)
 		OIIO::ImageBuf image_grid_buf{image_grid_spec, image_grid.storage().data()};
 		OIIO::ImageBufAlgo::paste(image_grid_buf, 1, 1, 0, 0, image);
 
 		AND_GIVEN("image is split into filter regions")
 		{
-			sycl::context ctx;
-			sycl::device dev{sycl::gpu_selector_v};
+			sycl::context const ctx;
+			sycl::device const dev{sycl::gpu_selector_v};
 			//			sycl::device dev{sycl::cpu_selector_v};
-			using FilterGrid = convfelt::ConvGridTD<felt2::Scalar, 3, true>;
+			using FilterGrid =
+				convfelt::ConvGridTD<felt2::Scalar, 3, convfelt::GridFlag::is_device_shared>;
 
 			FilterSizeHelper const filter_input_sizer{felt2::Vec3i{4, 4, 3}, felt2::Vec3i{2, 2, 0}};
 
@@ -1444,7 +1457,7 @@ SCENARIO("Applying filter to ConvGrid")
 					filter_input_sizer.input_start_pos_from_filter_pos(
 						filter_input_grid->children().index(filter_pos_idx));
 
-				for (felt2::PosIdx local_pos_idx : convfelt::iter::pos_idx(filter))
+				for (felt2::PosIdx const local_pos_idx : convfelt::iter::pos_idx(filter))
 				{
 					const felt2::Vec3i input_pos =
 						input_pos_start + felt2::index(local_pos_idx, filter.size());
@@ -1455,14 +1468,14 @@ SCENARIO("Applying filter to ConvGrid")
 
 			WHEN("image is split into filter regions on device")
 			{
-				auto image_grid_device =
-					felt2::device::make_unique_sycl<convfelt::ByValue<felt2::Scalar, 3, true>>(
-						dev,
-						ctx,
-						convfelt::make_device_context(dev, ctx),
-						image_grid.size(),
-						image_grid.offset(),
-						0.0f);
+				auto image_grid_device = felt2::device::make_unique_sycl<
+					convfelt::ByValue<felt2::Scalar, 3, convfelt::GridFlag::is_device_shared>>(
+					dev,
+					ctx,
+					convfelt::make_device_context(dev, ctx),
+					image_grid.size(),
+					image_grid.offset(),
+					0.0F);
 
 				image_grid_device->storage().assign(
 					image_grid.storage().begin(), image_grid.storage().end());
@@ -1473,28 +1486,28 @@ SCENARIO("Applying filter to ConvGrid")
 					convfelt::make_device_context(dev, ctx),
 					input_size,
 					filter_input_sizer.filter_window());
-				sycl::range<1> work_items{image_grid_device->storage().size()};
-				sycl::queue q{ctx, dev, &async_handler};
+				sycl::range<1> const work_items{image_grid_device->storage().size()};
+				sycl::queue queue{ctx, dev, &async_handler};  // NOLINT(misc-const-correctness)
 
 				[[maybe_unused]] auto const log_storage =
 					felt2::components::device::Log::make_storage(
-						q.get_device(), q.get_context(), work_items.get(0), 1024UL);
+						queue.get_device(), queue.get_context(), work_items.get(0), 1024UL);
 				image_grid_device->context().logger().set_storage(log_storage);
 				filter_input_grid_device->context().logger().set_storage(log_storage);
 
-				q.submit(
-					[&](sycl::handler & cgh)
+				queue.submit(
+					[&](sycl::handler & cgh_)
 					{
-						cgh.parallel_for<class grid_copy>(
+						cgh_.parallel_for<class grid_copy>(
 							work_items,
 							[filter_input_sizer,
 							 image_grid_device = image_grid_device.get(),
 							 filter_input_grid_device =
-								 filter_input_grid_device.get()](sycl::item<1> item)
+								 filter_input_grid_device.get()](sycl::item<1> item_)
 							{
 								auto & filter_inputs = filter_input_grid_device->children();
 
-								felt2::PosIdx const input_pos_idx = item.get_linear_id();
+								felt2::PosIdx const input_pos_idx = item_.get_linear_id();
 								felt2::Vec3i const source_pos =
 									image_grid_device->index(input_pos_idx);
 
@@ -1504,13 +1517,14 @@ SCENARIO("Applying filter to ConvGrid")
 								filter_input_sizer.input_pos_from_source_pos(
 									image_grid_device->size(),
 									source_pos,
-									[&](felt2::Vec3i const & filter_pos,
-										felt2::Vec3i const & global_pos) {
-										filter_inputs.get(filter_pos).set(global_pos, source_value);
+									[&](felt2::Vec3i const & filter_pos_,
+										felt2::Vec3i const & global_pos_) {
+										filter_inputs.get(filter_pos_)
+											.set(global_pos_, source_value);
 									});
 							});
 					});
-				q.wait_and_throw();
+				queue.wait_and_throw();
 				THEN("device grid matches expected grid")
 				{
 					CHECK(filter_input_grid->size() == filter_input_grid_device->size());
@@ -1524,7 +1538,7 @@ SCENARIO("Applying filter to ConvGrid")
 						filter_input_grid->children().storage().size() ==
 						filter_input_grid_device->children().storage().size());
 
-					for (felt2::PosIdx child_pos_idx :
+					for (felt2::PosIdx const child_pos_idx :
 						 convfelt::iter::pos_idx(filter_input_grid->children()))
 					{
 						auto const & expected_child =
@@ -1556,7 +1570,7 @@ SCENARIO("Applying filter to ConvGrid")
 				REQUIRE(
 					filter_output_grid->children().size() == filter_input_grid->children().size());
 
-				convfelt::USMMatrix usm_weights{
+				convfelt::USMMatrix const usm_weights{
 					filter_output_sizer.num_filter_elems(),
 					filter_input_sizer.num_filter_elems(),
 					dev,
@@ -1586,27 +1600,32 @@ SCENARIO("Applying filter to ConvGrid")
 
 				WHEN("filter is applied to grid using Eigen in a hand-rolled kernel")
 				{
-					sycl::queue q{ctx, dev, &async_handler};
+					sycl::queue queue{ctx, dev, &async_handler};  // NOLINT(misc-const-correctness)
 
-					q.submit([pgrid = filter_input_grid.get()](sycl::handler & cgh)
-							 { cgh.prefetch(pgrid->bytes().data(), pgrid->bytes().size()); });
-					q.submit([pgrid = filter_output_grid.get()](sycl::handler & cgh)
-							 { cgh.prefetch(pgrid->bytes().data(), pgrid->bytes().size()); });
-					q.submit(
-						[&usm_weights](sycl::handler & cgh)
-						{ cgh.prefetch(usm_weights.bytes().data(), usm_weights.bytes().size()); });
+					queue.submit([pgrid = filter_input_grid.get()](sycl::handler & cgh_)
+								 { cgh_.prefetch(pgrid->bytes().data(), pgrid->bytes().size()); });
+					queue.submit([pgrid = filter_output_grid.get()](sycl::handler & cgh_)
+								 { cgh_.prefetch(pgrid->bytes().data(), pgrid->bytes().size()); });
+					queue.submit(
+						[&usm_weights](sycl::handler & cgh_)
+						{ cgh_.prefetch(usm_weights.bytes().data(), usm_weights.bytes().size()); });
 
-					sycl::nd_range<1> work_range{
+					sycl::nd_range<1> const work_range{
 						filter_output_grid->storage().size(),
 						static_cast<size_t>(filter_output_grid->child_size().prod())};
 
+					static constexpr auto k_max_log_len = 1024UZ;
+
 					auto log_storage = felt2::components::device::Log::make_storage(
-						q.get_device(), q.get_context(), work_range.get_local().get(0), 1024UL);
+						queue.get_device(),
+						queue.get_context(),
+						work_range.get_local().get(0),
+						k_max_log_len);
 					filter_input_grid->context().logger().set_storage(log_storage);
 					filter_output_grid->context().logger().set_storage(log_storage);
 
-					q.submit(
-						[&](sycl::handler & cgh)
+					queue.submit(
+						[&](sycl::handler & cgh_)
 						{
 							assert(
 								usm_weights.matrix().rows() ==
@@ -1619,19 +1638,18 @@ SCENARIO("Applying filter to ConvGrid")
 								felt2::Scalar,
 								1,
 								sycl::access::mode::read_write,
-								sycl::access::target::local>
-								input_child_data{
-									static_cast<std::size_t>(usm_weights.matrix().cols()), cgh};
+								sycl::access::target::local> const input_child_data{
+								static_cast<std::size_t>(usm_weights.matrix().cols()), cgh_};
 
-							cgh.parallel_for<class grid_mult>(
+							cgh_.parallel_for<class grid_mult>(
 								work_range,
 								[filter_input_grid = filter_input_grid.get(),
 								 filter_output_grid = filter_output_grid.get(),
 								 weights = usm_weights.matrix(),
-								 input_child_data](sycl::nd_item<1> item)
+								 input_child_data](sycl::nd_item<1> item_)
 								{
-									std::size_t const group_id = item.get_group_linear_id();
-									std::size_t const local_id = item.get_local_linear_id();
+									std::size_t const group_id = item_.get_group_linear_id();
+									std::size_t const local_id = item_.get_local_linear_id();
 
 									auto & input_child =
 										filter_input_grid->children().get(group_id);
@@ -1667,7 +1685,8 @@ SCENARIO("Applying filter to ConvGrid")
 									//  I.e. will we need the input grid further down the line?
 									//  Otherwise could construct input region here - see next
 									//  test.
-									item.async_work_group_copy(
+									item_
+										.async_work_group_copy(
 											input_child_data.get_pointer(),
 											sycl::global_ptr<felt2::Scalar>{
 												input_child.storage().data()},
@@ -1680,14 +1699,15 @@ SCENARIO("Applying filter to ConvGrid")
 
 									ColVectorMap const input_vec{
 										input_child_data.get_pointer().get(), weights.cols()};
-									ColVectorMap output_vec{
-										output_child.storage().data(), weights.rows()};
+									ColVectorMap output_vec{// NOLINT(misc-const-correctness)
+															output_child.storage().data(),
+															weights.rows()};
 
 									auto const row_idx = static_cast<Eigen::Index>(local_id);
 									output_vec(row_idx) = weights.row(row_idx).dot(input_vec);
 								});
 						});
-					q.wait_and_throw();
+					queue.wait_and_throw();
 
 					THEN("values are as expected")
 					{
@@ -1699,24 +1719,24 @@ SCENARIO("Applying filter to ConvGrid")
 
 				WHEN("filter is applied in kernel that computes filter input on the fly")
 				{
-					sycl::queue q{ctx, dev, &async_handler};
+					sycl::queue queue{ctx, dev, &async_handler};  // NOLINT(misc-const-correctness)
 
 					auto filter_input_template = felt2::device::make_unique_sycl<
-						convfelt::TemplateParentGridTD<felt2::Scalar, 3, true>>(
-						q.get_device(),
-						q.get_context(),
-						convfelt::make_device_context(q),
+						convfelt::TemplateParentGridTD<felt2::Scalar, 3, 1U>>(
+						queue.get_device(),
+						queue.get_context(),
+						convfelt::make_device_context(queue),
 						input_size,
 						filter_input_sizer.filter_window());
 
-					auto image_grid_device =
-						felt2::device::make_unique_sycl<convfelt::ByValue<felt2::Scalar, 3, true>>(
-							q.get_device(),
-							q.get_context(),
-							convfelt::make_device_context(q),
-							image_grid.size(),
-							image_grid.offset(),
-							0.0f);
+					auto image_grid_device = felt2::device::make_unique_sycl<
+						convfelt::ByValue<felt2::Scalar, 3, convfelt::GridFlag::is_device_shared>>(
+						queue.get_device(),
+						queue.get_context(),
+						convfelt::make_device_context(queue),
+						image_grid.size(),
+						image_grid.offset(),
+						0.0F);
 
 					image_grid_device->storage().assign(
 						image_grid.storage().begin(), image_grid.storage().end());
@@ -1735,22 +1755,23 @@ SCENARIO("Applying filter to ConvGrid")
 						static_cast<std::size_t>(filter_output_grid->size().prod()));
 					CHECK(elems_per_image == filter_output_grid->storage().size());
 
-					constexpr auto scalar = [](auto v) { return static_cast<felt2::Scalar>(v); };
+					constexpr auto k_scalar = [](auto val_)
+					{ return static_cast<felt2::Scalar>(val_); };
 
 					felt2::Scalar const ideal_work_groups_per_image =
-						scalar(elems_per_image) / scalar(ideal_elems_per_work_group);
+						k_scalar(elems_per_image) / k_scalar(ideal_elems_per_work_group);
 
 					felt2::Scalar const ideal_filters_per_work_group =
-						scalar(filters_per_image) / ideal_work_groups_per_image;
+						k_scalar(filters_per_image) / ideal_work_groups_per_image;
 
 					auto const filters_per_work_group =
 						static_cast<std::size_t>(std::ceil(ideal_filters_per_work_group));
 
 					felt2::Scalar const work_groups_per_image =
-						scalar(filters_per_image) / scalar(filters_per_work_group);
+						k_scalar(filters_per_image) / k_scalar(filters_per_work_group);
 
 					felt2::Scalar const elems_per_work_group =
-						scalar(elems_per_image) / work_groups_per_image;
+						k_scalar(elems_per_image) / work_groups_per_image;
 
 					auto const num_work_groups =
 						static_cast<std::size_t>(std::ceil(work_groups_per_image));
@@ -1778,28 +1799,31 @@ SCENARIO("Applying filter to ConvGrid")
 					CHECK(
 						filter_output_grid->storage().size() == num_work_groups * work_group_size);
 
-					sycl::nd_range<1> work_range{
+					sycl::nd_range<1> const work_range{
 						num_work_groups * work_group_size, work_group_size};
 
 					[[maybe_unused]] auto const log_storage =
 						felt2::components::device::Log::make_storage(
-							q.get_device(), q.get_context(), work_range.get_local().get(0), 1024);
+							queue.get_device(),
+							queue.get_context(),
+							work_range.get_local().get(0),
+							1024);
 
 					filter_input_template->context().logger().set_storage(log_storage);
 					filter_input_grid->context().logger().set_storage(log_storage);
 					filter_output_grid->context().logger().set_storage(log_storage);
 					image_grid_device->context().logger().set_storage(log_storage);
 
-					q.submit(
-						[&](sycl::handler & cgh)
+					queue.submit(
+						[&](sycl::handler & cgh_)
 						{
-							sycl::local_accessor<felt2::Scalar, 2> input_child_data{
+							sycl::local_accessor<felt2::Scalar, 2> const input_child_data{
 								sycl::range(
 									filters_per_work_group,
 									static_cast<std::size_t>(usm_weights.matrix().cols())),
-								cgh};
+								cgh_};
 
-							cgh.parallel_for<class dynamic_input>(
+							cgh_.parallel_for<class dynamic_input>(
 								work_range,
 								[image_grid = image_grid_device.get(),
 								 filter_input_template = filter_input_template.get(),
@@ -1809,13 +1833,13 @@ SCENARIO("Applying filter to ConvGrid")
 								 input_child_data,
 								 filter_input_sizer,
 								 input_size = filter_input_sizer.input_size_from_source_size(
-									 image_grid.size())](sycl::nd_item<1> item)
+									 image_grid.size())](sycl::nd_item<1> item_)
 								{
-									std::size_t const group_id = item.get_group_linear_id();
-									std::size_t const local_id = item.get_local_linear_id();
+									std::size_t const group_id = item_.get_group_linear_id();
+									std::size_t const local_id = item_.get_local_linear_id();
 
 									felt2::PosIdx const elems_per_work_group =
-										item.get_local_range(0);
+										item_.get_local_range(0);
 									felt2::PosIdx const elems_per_filter =
 										elems_per_work_group / filters_per_work_group;
 
@@ -1870,6 +1894,8 @@ SCENARIO("Applying filter to ConvGrid")
 										return;
 									}
 
+									// Seriously?
+									// NOLINTNEXTLINE(misc-const-correctness)
 									for (felt2::PosIdx simd_col = 0; simd_col < num_cols;
 										 simd_col += elems_per_filter)
 									{
@@ -1888,7 +1914,7 @@ SCENARIO("Applying filter to ConvGrid")
 									if (elem_idx_for_item > output_child.storage().size())
 										return;
 
-									item.barrier(sycl::access::fence_space::local_space);
+									item_.barrier(sycl::access::fence_space::local_space);
 
 									auto const row_idx =
 										static_cast<Eigen::Index>(elem_idx_for_item);
@@ -1897,7 +1923,7 @@ SCENARIO("Applying filter to ConvGrid")
 										weights.row(row_idx).dot(input_child.matrix());
 								});
 						});
-					q.wait_and_throw();
+					queue.wait_and_throw();
 
 					THEN("values are as expected")
 					{
@@ -1911,10 +1937,10 @@ SCENARIO("Applying filter to ConvGrid")
 
 				WHEN("filter is applied to grid using oneMKL")
 				{
-					sycl::queue q{ctx, dev, &async_handler};
+					sycl::queue queue{ctx, dev, &async_handler};  // NOLINT(misc-const-correctness)
 
 					oneapi::mkl::blas::column_major::gemm(
-						q,
+						queue,
 						oneapi::mkl::transpose::nontrans,
 						oneapi::mkl::transpose::nontrans,
 						// m: Rows of output / rows of weights
@@ -1937,7 +1963,7 @@ SCENARIO("Applying filter to ConvGrid")
 						filter_output_grid->matrix().data(),
 						filter_output_grid->matrix().rows());
 
-					q.wait_and_throw();
+					queue.wait_and_throw();
 					THEN("values are as expected")
 					{
 						assert_expected_values();
@@ -1958,7 +1984,7 @@ SCENARIO("Applying filter to ConvGrid")
 
 				REQUIRE(filter_output_grid->children().size() == felt2::Vec3i(1, 1, 1));
 
-				convfelt::USMMatrix usm_weights{
+				convfelt::USMMatrix const usm_weights{
 					filter_output_sizer.num_filter_elems(), image_grid.size().prod(), dev, ctx};
 
 				usm_weights.matrix().setRandom();
@@ -1983,22 +2009,22 @@ SCENARIO("Applying filter to ConvGrid")
 
 				WHEN("filter is applied to grid using oneMKL")
 				{
-					sycl::queue q{ctx, dev, &async_handler};
+					sycl::queue queue{ctx, dev, &async_handler};  // NOLINT(misc-const-correctness)
 
-					auto image_grid_device =
-						felt2::device::make_unique_sycl<convfelt::ByValue<felt2::Scalar, 3, true>>(
-							dev,
-							ctx,
-							convfelt::make_device_context(dev, ctx),
-							image_grid.size(),
-							image_grid.offset(),
-							0.0F);
+					auto image_grid_device = felt2::device::make_unique_sycl<
+						convfelt::ByValue<felt2::Scalar, 3, convfelt::GridFlag::is_device_shared>>(
+						dev,
+						ctx,
+						convfelt::make_device_context(dev, ctx),
+						image_grid.size(),
+						image_grid.offset(),
+						0.0F);
 
 					image_grid_device->storage().assign(
 						image_grid.storage().begin(), image_grid.storage().end());
 
 					oneapi::mkl::blas::column_major::gemm(
-						q,
+						queue,
 						oneapi::mkl::transpose::nontrans,
 						oneapi::mkl::transpose::nontrans,
 						// m: Rows of output / rows of weights
@@ -2021,7 +2047,7 @@ SCENARIO("Applying filter to ConvGrid")
 						filter_output_grid->matrix().data(),
 						filter_output_grid->matrix().rows());
 
-					q.wait_and_throw();
+					queue.wait_and_throw();
 					THEN("values are as expected")
 					{
 						assert_expected_values();
@@ -2031,3 +2057,6 @@ SCENARIO("Applying filter to ConvGrid")
 		}  // AND_GIVEN("image is split into filter regions")
 	}
 }
+// NOLINTEND(readability-identifier-length)
+// NOLINTEND(*-magic-numbers)
+// NOLINTEND(readability-function-cognitive-complexity)

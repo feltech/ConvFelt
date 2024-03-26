@@ -17,7 +17,7 @@ struct EigenMap
 	using ColArrayMap = Eigen::Map<Eigen::Array<Leaf, 1, Eigen::Dynamic>, Eigen::ColMajor>;
 	using ColVectorMap = Eigen::Map<Eigen::Matrix<Leaf, Eigen::Dynamic, 1>, Eigen::ColMajor>;
 
-	Storage & m_storage_impl;
+	std::reference_wrapper<Storage> m_storage_impl;
 
 	/**
 	 * Map the raw data to a (column-major) Eigen::Map, which can be used for BLAS arithmetic.
@@ -27,7 +27,7 @@ struct EigenMap
 	constexpr ColArrayMap array() noexcept
 	{
 		return ColArrayMap(
-			m_storage_impl.storage().data(), Eigen::Index(m_storage_impl.storage().size()));
+			m_storage_impl.get().storage().data(), Eigen::Index(m_storage_impl.get().storage().size()));
 	}
 	/**
 	 * Map the raw data to a (row-major) Eigen::Map, which can be used for BLAS arithmetic.
@@ -37,13 +37,13 @@ struct EigenMap
 	constexpr ColVectorMap matrix() noexcept
 	{
 		return ColVectorMap(
-			m_storage_impl.storage().data(), Eigen::Index(m_storage_impl.storage().size()));
+			m_storage_impl.get().storage().data(), Eigen::Index(m_storage_impl.get().storage().size()));
 	}
 
-	constexpr ColVectorMap matrix() const noexcept
+	[[nodiscard]] constexpr ColVectorMap matrix() const noexcept
 	{
 		return ColVectorMap(
-			m_storage_impl.storage().data(), Eigen::Index(m_storage_impl.storage().size()));
+			m_storage_impl.get().storage().data(), Eigen::Index(m_storage_impl.get().storage().size()));
 	}
 };
 
@@ -55,8 +55,8 @@ struct MatrixColPerChild
 	using MatrixMap =
 		Eigen::Map<Eigen::Matrix<Leaf, Eigen::Dynamic, Eigen::Dynamic, Eigen::ColMajor>>;
 
-	Data & m_data_impl;
-	ChildrenSize const & m_children_size_impl;
+	std::reference_wrapper<Data> m_data_impl;
+	std::reference_wrapper<ChildrenSize> m_children_size_impl;
 
 	/**
 	 * Map the raw data to a  Eigen::Map, which can be used for BLAS arithmetic.
@@ -66,17 +66,17 @@ struct MatrixColPerChild
 	MatrixMap matrix() noexcept
 	{
 		return {
-			m_data_impl.storage().data(),
-			Eigen::Index(m_children_size_impl.num_elems_per_child()),
-			Eigen::Index(m_children_size_impl.num_children())};
+			m_data_impl.get().storage().data(),
+			Eigen::Index(m_children_size_impl.get().num_elems_per_child()),
+			Eigen::Index(m_children_size_impl.get().num_children())};
 	}
 
-	MatrixMap matrix() const noexcept
+	[[nodiscard]] MatrixMap matrix() const noexcept
 	{
 		return {
-			m_data_impl.storage().data(),
-			Eigen::Index(m_children_size_impl.num_elems_per_child()),
-			Eigen::Index(m_children_size_impl.num_children())};
+			m_data_impl.get().storage().data(),
+			Eigen::Index(m_children_size_impl.get().num_elems_per_child()),
+			Eigen::Index(m_children_size_impl.get().num_children())};
 	}
 };
 
@@ -89,7 +89,7 @@ struct MatrixMap
 
 	felt2::Dim m_rows;
 	felt2::Dim m_cols;
-	Storage & m_storage_impl;
+	std::reference_wrapper<Storage> m_storage_impl;
 
 	/**
 	 * Map the raw data to Eigen::Map, which can be used for BLAS arithmetic.
@@ -98,12 +98,12 @@ struct MatrixMap
 	 */
 	[[nodiscard]] constexpr Matrix matrix() noexcept
 	{
-		return {m_storage_impl.storage().data(), m_rows, m_cols};
+		return {m_storage_impl.get().storage().data(), m_rows, m_cols};
 	}
 
 	[[nodiscard]] constexpr Matrix matrix() const noexcept
 	{
-		return {m_storage_impl.storage().data(), m_rows, m_cols};
+		return {m_storage_impl.get().storage().data(), m_rows, m_cols};
 	}
 };
 

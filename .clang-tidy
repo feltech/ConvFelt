@@ -13,6 +13,10 @@
 #     De-facto standard #pragma once is preferred.
 # - *-default-arguments-declaration
 #     Default arguments are useful.
+# - -bugprone-easily-swappable-parameters
+#     TODO(DF): re-enable - too many positives to deal with right now.
+# - -fuchsia-trailing-return
+#     This check is too strict - doesn't exempt decltype when it's in an expression.
 Checks: >
   *,
   -llvmlibc-*,
@@ -22,7 +26,9 @@ Checks: >
   -*-braces-around-statements,
   -*-use-trailing-return-type,
   -llvm-header-guard,
-  -*-default-arguments-declarations
+  -*-default-arguments-declarations,
+  -bugprone-easily-swappable-parameters,
+  -fuchsia-trailing-return
 WarningsAsErrors: '*'
 HeaderFilterRegex: '.*'
 FormatStyle: file
@@ -40,7 +46,9 @@ CheckOptions:
     value:           true
   # Library "umbrella" headers
   - key:             misc-include-cleaner.IgnoreHeaders
-    value:           sycl/.*
+    value:           sycl/.*;experimental/.*/.*;fmt/.*
+  - key:             readability-identifier-length.IgnoredLoopCounterNames
+    value:           ^[ijk_xyz]$
   - key:             readability-identifier-naming.ClassCase
     value:           CamelCase
   - key:             readability-identifier-naming.ClassMemberCase

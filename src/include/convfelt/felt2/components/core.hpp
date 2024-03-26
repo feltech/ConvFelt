@@ -1,15 +1,27 @@
 // Copyright 2023 David Feltell
 // SPDX-License-Identifier: MIT
 #pragma once
+#include <algorithm>
+#include <array>
 #include <concepts>
 #include <cstddef>
+#include <cstdlib>
 #include <functional>
+#include <limits>
 #include <ranges>
 #include <span>
+#include <string>
+#include <string_view>
 #include <type_traits>
+#include <utility>
 #include <vector>
 
 #include <fmt/format.h>
+#include <fmt/ranges.h>
+#include <range/v3/range/conversion.hpp>
+#include <range/v3/view/indices.hpp>
+#include <range/v3/view/join.hpp>
+#include <range/v3/view/repeat_n.hpp>
 
 #include "../typedefs.hpp"
 
@@ -25,13 +37,13 @@ constexpr auto unwrap(auto && val_)
 }
 
 template <class T>
-concept IsStream = requires(T t_)
+concept IsStream = requires(T obj_)
 {
-	{t_ << "char array"};
-	{t_ << std::size_t{}};
-	{t_ << int{}};
-	{t_ << float{}};
-	{t_ << double{}};
+	{obj_ << "char array"};
+	{obj_ << std::size_t{}};
+	{obj_ << int{}};
+	{obj_ << float{}};
+	{obj_ << double{}};
 };
 
 template <class T>
@@ -121,92 +133,92 @@ concept HasBytes = requires(T obj_)
 };
 
 template <class T>
-concept HasStream = requires(T t_)
+concept HasStream = requires(T obj_)
 {
 	{
-		t_.has_stream()
+		obj_.has_stream()
 	} -> std::convertible_to<bool>;
 	{
-		t_.get_stream()
+		obj_.get_stream()
 	} -> IsStream;
 };
 
 template <class T>
-concept HasLog = requires(T t_)
+concept HasLog = requires(T obj_)
 {
 	{
-		t_.log()
+		obj_.log()
 	} -> std::convertible_to<bool>;
 };
 
 template <class T>
-concept HasAbort = requires(T t_)
+concept HasAbort = requires(T obj_)
 {
-	{t_.abort()};
+	{obj_.abort()};
 };
 
 template <class T>
-concept IsContext = requires(T t_)
+concept IsContext = requires(T obj_)
 {
-	requires HasLog<decltype(t_.logger())>;
-	requires HasAbort<decltype(t_.aborter())>;
+	requires HasLog<decltype(obj_.logger())>;
+	requires HasAbort<decltype(obj_.aborter())>;
 };
 
 template <class T>
-concept HasSize = requires(T t_)
+concept HasSize = requires(T obj_)
 {
 	typename T::VecDi;
 	{
-		t_.size()
+		obj_.size()
 	} -> std::convertible_to<typename T::VecDi>;
 	{
-		t_.offset()
+		obj_.offset()
 	} -> std::convertible_to<typename T::VecDi>;
 	{
-		t_.index(std::declval<typename T::VecDi>())
+		obj_.index(std::declval<typename T::VecDi>())
 	} -> std::convertible_to<PosIdx>;
 	{
-		t_.index(std::declval<PosIdx>())
+		obj_.index(std::declval<PosIdx>())
 	} -> std::convertible_to<typename T::VecDi>;
 };
 
 template <class T>
-concept HasSizeCheck = HasSize<T> && requires(T t_)
+concept HasSizeCheck = HasSize<T> && requires(T obj_)
 {
 	{
-		t_.inside(std::declval<typename T::VecDi>())
+		obj_.inside(std::declval<typename T::VecDi>())
 	} -> std::convertible_to<bool>;
 };
 
 template <class T>
-concept HasResize = requires(T t_)
+concept HasResize = requires(T obj_)
 {
 	typename T::VecDi;
-	{t_.resize(std::declval<typename T::VecDi>(), std::declval<typename T::VecDi>())};
+	{obj_.resize(std::declval<typename T::VecDi>(), std::declval<typename T::VecDi>())};
 };
 
 template <class T, Dim D>
-concept HasAssertBounds = requires(T t_)
+concept HasAssertBounds = requires(T obj_)
 {
-	{t_.assert_pos_bounds(std::declval<PosIdx>(), std::declval<const char *>())};
+	{obj_.assert_pos_bounds(std::declval<PosIdx>(), std::declval<const char *>())};
 
-	{t_.assert_pos_idx_bounds(std::declval<VecDi<D>>(), std::declval<const char *>())};
+	{obj_.assert_pos_idx_bounds(std::declval<VecDi<D>>(), std::declval<const char *>())};
 
-	{t_.assert_pos_bounds(std::declval<VecDi<D>>(), std::declval<const char *>())};
+	{obj_.assert_pos_bounds(std::declval<VecDi<D>>(), std::declval<const char *>())};
 
-	{t_.assert_pos_idx_bounds(std::declval<PosIdx>(), std::declval<const char *>())};
+	{obj_.assert_pos_idx_bounds(std::declval<PosIdx>(), std::declval<const char *>())};
 };
 
 template <class T>
-concept HasReadAccess = requires(T t_)
+concept HasReadAccess = requires(T obj_)
 {
 	typename T::VecDi;
 	typename T::Leaf;
 	{
-		t_.get(std::declval<typename T::VecDi>())
+		obj_.get(std::declval<typename T::VecDi>())
 	} -> std::convertible_to<const typename T::Leaf &>;
 	{
-		t_.get(std::declval<PosIdx>())
+		obj_.get(std::declval<PosIdx>())
 	} -> std::convertible_to<const typename T::Leaf &>;
 };
 template <class T>
@@ -223,14 +235,14 @@ concept IsGridOfSpanGrids = IsGrid<T> && requires
 };
 
 template <class T>
-concept HasChildrenSize = requires(T t_)
+concept HasChildrenSize = requires(T obj_)
 {
 	typename T::VecDi;
 	{
-		t_.num_elems_per_child()
+		obj_.num_elems_per_child()
 	} -> std::same_as<PosIdx>;
 	{
-		t_.num_children()
+		obj_.num_children()
 	} -> std::same_as<PosIdx>;
 };
 
@@ -267,18 +279,18 @@ struct Size
 	using VecDi = VecDi<k_dims>;
 
 	/// The dimensions (size) of the grid.
-	VecDi const m_size;
+	VecDi m_size;
 	/// The translational offset of the grid's zero coordinate.
-	VecDi const m_offset;
+	VecDi m_offset;
 	/// Cache for use in `inside`.
-	VecDi const m_offset_plus_size{m_offset + m_size};
+	VecDi m_offset_plus_size{m_offset + m_size};
 
-	const VecDi & size() const noexcept
+	[[nodiscard]] const VecDi & size() const noexcept
 	{
 		return m_size;
 	}
 
-	const VecDi & offset() const noexcept
+	[[nodiscard]] const VecDi & offset() const noexcept
 	{
 		return m_offset;
 	}
@@ -292,7 +304,7 @@ struct Size
 	 * @param pos_ position in grid to query.
 	 * @return index in internal data array of this grid position.
 	 */
-	PosIdx index(const VecDi & pos_) const noexcept
+	[[nodiscard]] PosIdx index(const VecDi & pos_) const noexcept
 	{
 		return felt2::index(pos_, size(), offset());
 	}
@@ -305,7 +317,7 @@ struct Size
 	 * @param idx_ index in internal data array to query.
 	 * @return the position in the grid represented in the data array at given index.
 	 */
-	VecDi index(const PosIdx idx_) const noexcept
+	[[nodiscard]] VecDi index(const PosIdx idx_) const noexcept
 	{
 		return felt2::index(idx_, size(), offset());
 	}
@@ -318,7 +330,7 @@ struct Size
 	 * @return true if position lies inside the grid, false otherwise.
 	 */
 	template <typename T>
-	bool inside(const VecDT<T, k_dims> & pos_) const noexcept
+	[[nodiscard]] bool inside(const VecDT<T, k_dims> & pos_) const noexcept
 	{
 		return felt2::inside(pos_, m_offset, m_offset_plus_size);
 	}
@@ -339,7 +351,7 @@ struct ResizableSize
 	/// Cache for use in `inside`.
 	VecDi m_offset_plus_size{m_offset + m_size};
 
-	const VecDi & size() const noexcept
+	[[nodiscard]] const VecDi & size() const noexcept
 	{
 		return m_size;
 	}
@@ -349,7 +361,7 @@ struct ResizableSize
 		return m_size;
 	}
 
-	const VecDi & offset() const noexcept
+	[[nodiscard]] const VecDi & offset() const noexcept
 	{
 		return m_offset;
 	}
@@ -375,7 +387,7 @@ struct ResizableSize
 	 * @param pos_ position in grid to query.
 	 * @return index in internal data array of this grid position.
 	 */
-	PosIdx index(const VecDi & pos_) const noexcept
+	[[nodiscard]] PosIdx index(const VecDi & pos_) const noexcept
 	{
 		return felt2::index(pos_, size(), offset());
 	}
@@ -388,7 +400,7 @@ struct ResizableSize
 	 * @param idx_ index in internal data array to query.
 	 * @return the position in the grid represented in the data array at given index.
 	 */
-	VecDi index(const PosIdx idx_) const noexcept
+	[[nodiscard]] VecDi index(const PosIdx idx_) const noexcept
 	{
 		return felt2::index(idx_, size(), offset());
 	}
@@ -401,7 +413,7 @@ struct ResizableSize
 	 * @return true if position lies inside the grid, false otherwise.
 	 */
 	template <typename T>
-	bool inside(const VecDT<T, k_dims> & pos_) const
+	[[nodiscard]] bool inside(const VecDT<T, k_dims> & pos_) const
 	{
 		return felt2::inside(pos_, m_offset, m_offset_plus_size);
 	}
@@ -431,15 +443,16 @@ struct AssertBounds
 	{
 		if (!m_size_impl.get().inside(pos_))
 		{
-			typename Size::VecDi max_extent = m_size_impl.get().offset() + m_size_impl.get().size();
-		m_context_impl.get().logger().log(
+			typename Size::VecDi const k_max_extent =
+				m_size_impl.get().offset() + m_size_impl.get().size();
+			m_context_impl.get().logger().log(
 				"AssertionError: ",
 				title_,
 				" assert_pos_bounds",
 				pos_,
 				m_size_impl.get().offset(),
 				" - ",
-				max_extent,
+				k_max_extent,
 				"\n");
 
 			m_context_impl.get().aborter().abort();
@@ -495,7 +508,7 @@ struct Activate
 	std::reference_wrapper<Context> m_context_impl;
 	std::reference_wrapper<Size const> m_size_impl;
 	std::reference_wrapper<Storage> m_storage_impl;
-	Leaf const m_background;
+	Leaf m_background;
 
 	/**
 	 * Get whether this grid has been activated (data allocated) or not.
@@ -512,7 +525,7 @@ struct Activate
 	 *
 	 * @return background value.
 	 */
-	const Leaf & background() const noexcept
+	[[nodiscard]] const Leaf & background() const noexcept
 	{
 		return m_background;
 	}
@@ -589,7 +602,7 @@ struct AccessByRef
 	 * @param pos_ position in grid to query.
 	 * @return internally stored value at given grid position
 	 */
-	const Leaf & get(const VecDi & pos_) const noexcept
+	[[nodiscard]] const Leaf & get(const VecDi & pos_) const noexcept
 	{
 #ifdef FELT2_DEBUG_ENABLED
 		m_assert_impl.get().assert_pos_bounds(pos_, "get: ");
@@ -618,7 +631,7 @@ struct AccessByRef
 	 * @param pos_idx_ data index of position to query.
 	 * @return internally stored value at given grid position
 	 */
-	const Leaf & get(const PosIdx pos_idx_) const noexcept
+	[[nodiscard]] const Leaf & get(const PosIdx pos_idx_) const noexcept
 	{
 #ifdef FELT2_DEBUG_ENABLED
 		m_assert_impl.get().assert_pos_idx_bounds(pos_idx_, "get: ");
@@ -651,7 +664,7 @@ struct AccessByValue
 	 * @param pos_ position in grid to query.
 	 * @return internally stored value at given grid position
 	 */
-	Leaf get(const VecDi & pos_) const noexcept
+	[[nodiscard]] Leaf get(const VecDi & pos_) const noexcept
 	{
 		FELT2_DEBUG_CALL(m_assert_impl).get().assert_pos_bounds(pos_, "get: ");
 		const PosIdx idx = m_size_impl.get().index(pos_);
@@ -664,7 +677,7 @@ struct AccessByValue
 	 * @param pos_idx_ data index of position to query.
 	 * @return internally stored value at given grid position
 	 */
-	Leaf get(const PosIdx pos_idx_) const noexcept
+	[[nodiscard]] Leaf get(const PosIdx pos_idx_) const noexcept
 	{
 		FELT2_DEBUG_CALL(m_assert_impl).get().assert_pos_idx_bounds(pos_idx_, "get: ");
 		return m_storage_impl.get().storage()[pos_idx_];
@@ -707,16 +720,12 @@ struct StorageBytes
 
 	[[nodiscard]] constexpr std::span<std::byte const> bytes() const noexcept
 	{
-		return {
-			reinterpret_cast<std::byte const *>(m_storage_impl.get().storage().data()),
-			m_storage_impl.get().storage().size() * sizeof(Leaf)};
+		return std::as_bytes(m_storage_impl.get().storage());
 	}
 
 	[[nodiscard]] constexpr std::span<std::byte> bytes() noexcept
 	{
-		return {
-			reinterpret_cast<std::byte *>(m_storage_impl.get().storage().data()),
-			m_storage_impl.get().storage().size() * sizeof(Leaf)};
+		return std::as_writable_bytes(m_storage_impl.get().storage());
 	}
 };
 
@@ -750,7 +759,7 @@ struct DataArraySpan
 		return m_data;
 	}
 
-	constexpr Array const & storage() const noexcept
+	[[nodiscard]] constexpr Array const & storage() const noexcept
 	{
 		return m_data;
 	}
@@ -764,10 +773,9 @@ struct ChildrenSize
 
 	std::reference_wrapper<Size const> m_size_impl;
 	/// Size of a child sub-grid.
-	VecDi const m_child_size;
-	VecDi const m_child_offset{
-		(m_size_impl.get().offset().array() / m_child_size.array()).matrix()};
-	VecDi const m_children_size{
+	VecDi m_child_size;
+	VecDi m_child_offset{(m_size_impl.get().offset().array() / m_child_size.array()).matrix()};
+	VecDi m_children_size{
 		[&]() constexpr noexcept
 		{
 			VecDi children_size =
@@ -782,8 +790,8 @@ struct ChildrenSize
 
 			return children_size;
 		}()};
-	PosIdx const m_num_children{static_cast<PosIdx>(m_children_size.prod())};
-	PosIdx const m_num_elems_per_child{static_cast<PosIdx>(m_child_size.prod())};
+	PosIdx m_num_children{static_cast<PosIdx>(m_children_size.prod())};
+	PosIdx m_num_elems_per_child{static_cast<PosIdx>(m_child_size.prod())};
 
 	/**
 	 * Get size of child sub-grids.
@@ -840,7 +848,6 @@ struct ChildrenSize
 		auto pos_child_offset = (pos_leaf_offset.array() / m_child_size.array()).matrix();
 		// Position of child grid containing leaf, including offset.
 		auto pos_child = pos_child_offset + m_child_offset;
-		// Encode child position as an index.
 		return pos_child;
 	}
 
@@ -928,27 +935,10 @@ struct ChildrenSize
 
 struct Log
 {
-	template <std::size_t num_args>
-	static constexpr std::array<char, num_args * 2> k_template_buff = [] consteval
-	{
-		std::string tmplt;
-		for (std::size_t arg_idx = 0; arg_idx < num_args; ++arg_idx)
-		{
-			tmplt += "{}";
-		}
-		std::array<char, num_args * 2> buff;
-		std::copy(begin(tmplt), end(tmplt), buff.begin());
-		return buff;
-	}();
-
-	template <std::size_t num_args>
-	static constexpr std::string_view k_template_string{
-		k_template_buff<num_args>.data(), k_template_buff<num_args>.size()};
-
 	template <typename... Args>
-	bool log(Args &&... args_) const noexcept
+	bool log(Args &&... args_) const noexcept  // NOLINT(modernize-use-nodiscard)
 	{
-		fmt::print(k_template_string<sizeof...(Args)>, std::forward<Args>(args_)...);
+		fmt::print("{}", fmt::join(std::tuple{std::forward<Args>(args_)...}, ""));
 		return true;
 	}
 };

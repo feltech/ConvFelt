@@ -3,6 +3,7 @@
 #include <cstddef>
 #include <cstdint>
 #include <functional>
+#include <span>
 #include <type_traits>
 
 #include <sycl/sycl.hpp>
@@ -40,8 +41,8 @@ struct GridFlag
 {
 	enum : GridFlags
 	{
-		is_device_shared = 1 << 0,
-		is_child = 1 << 1
+		is_device_shared = 1U << 0U,
+		is_child = 1U << 1U
 	};
 };
 
@@ -89,7 +90,6 @@ class USMMatrix
 	};
 	using StorageImpl = felt2::components::device::USMRawArray<Traits>;
 	using MatrixImpl = felt2::components::MatrixMap<StorageImpl>;
-	using BytesImpl = felt2::components::StorageBytes<StorageImpl>;
 
 public:
 	USMMatrix(
@@ -98,7 +98,6 @@ public:
 		sycl::device const & dev_,
 		sycl::context const & ctx_)
 		: m_storage_impl{static_cast<std::size_t>(rows_ * cols_), dev_, ctx_},
-		  m_bytes_impl{m_storage_impl},
 		  m_matrix_impl{rows_, cols_, m_storage_impl}
 	{
 	}
@@ -113,14 +112,14 @@ public:
 		return m_matrix_impl.matrix(std::forward<decltype(args_)>(args_)...);
 	}
 
-	[[nodiscard]] decltype(auto) bytes(auto &&... args_) noexcept
+	[[nodiscard]] decltype(auto) bytes() noexcept
 	{
-		return m_bytes_impl.bytes(std::forward<decltype(args_)>(args_)...);
+		return std::as_writable_bytes(m_storage_impl.storage());
 	}
 
-	[[nodiscard]] decltype(auto) bytes(auto &&... args_) const noexcept
+	[[nodiscard]] decltype(auto) bytes() const noexcept
 	{
-		return m_bytes_impl.bytes(std::forward<decltype(args_)>(args_)...);
+		return std::as_bytes(m_storage_impl.storage());
 	}
 
 	explicit operator MatrixImpl::Matrix()
@@ -130,8 +129,7 @@ public:
 
 private:
 	StorageImpl m_storage_impl;
-	BytesImpl m_bytes_impl;
-	MatrixImpl const m_matrix_impl;
+	MatrixImpl m_matrix_impl;
 };
 
 template <typename T, felt2::Dim D, GridFlags flags = 0>
@@ -165,12 +163,12 @@ public:
 
 private:
 	RefIfChildT<ContextImpl, flags> m_context_impl;
-	SizeImpl const m_size_impl;
+	SizeImpl m_size_impl;
 	StorageImpl m_storage_impl;
 	ActivateImpl m_activate_impl;
-	AssertBoundsImpl const m_assert_bounds_impl{m_context_impl, m_size_impl, m_storage_impl};
+	AssertBoundsImpl m_assert_bounds_impl{m_context_impl, m_size_impl, m_storage_impl};
 	AccessImpl m_access_impl{m_size_impl, m_storage_impl, m_assert_bounds_impl};
-	MatrixImpl const m_matrix_impl{m_storage_impl};
+	MatrixImpl m_matrix_impl{m_storage_impl};
 
 public:
 	ByValue(
@@ -218,7 +216,7 @@ public:
 	{
 		return m_storage_impl.storage(std::forward<decltype(args_)>(args_)...);
 	}
-	decltype(auto) storage(auto &&... args_) const noexcept
+	[[nodiscard]] decltype(auto) storage(auto &&... args_) const noexcept
 	{
 		return m_storage_impl.storage(std::forward<decltype(args_)>(args_)...);
 	}
@@ -230,7 +228,7 @@ public:
 	{
 		return m_access_impl.get(pos_);
 	}
-	decltype(auto) get(VecDi const & pos_) const noexcept
+	[[nodiscard]] decltype(auto) get(VecDi const & pos_) const noexcept
 	{
 		return m_access_impl.get(pos_);
 	}
@@ -238,7 +236,7 @@ public:
 	{
 		return m_access_impl.get(std::forward<decltype(args_)>(args_)...);
 	}
-	decltype(auto) get(auto &&... args_) const noexcept
+	[[nodiscard]] decltype(auto) get(auto &&... args_) const noexcept
 	{
 		return m_access_impl.get(std::forward<decltype(args_)>(args_)...);
 	}
@@ -246,11 +244,11 @@ public:
 	{
 		return m_access_impl.set(std::forward<decltype(args_)>(args_)...);
 	}
-	decltype(auto) offset(auto &&... args_) const noexcept
+	[[nodiscard]] decltype(auto) offset(auto &&... args_) const noexcept
 	{
 		return m_size_impl.offset(std::forward<decltype(args_)>(args_)...);
 	}
-	decltype(auto) size(auto &&... args_) const noexcept
+	[[nodiscard]] decltype(auto) size(auto &&... args_) const noexcept
 	{
 		return m_size_impl.size(std::forward<decltype(args_)>(args_)...);
 	}
@@ -262,7 +260,7 @@ public:
 	{
 		return m_matrix_impl.array(std::forward<decltype(args_)>(args_)...);
 	}
-	decltype(auto) matrix(auto &&... args_) const noexcept
+	[[nodiscard]] decltype(auto) matrix(auto &&... args_) const noexcept
 	{
 		return m_matrix_impl.matrix(std::forward<decltype(args_)>(args_)...);
 	}
@@ -305,7 +303,7 @@ private:
 	SizeImpl m_size_impl;
 	StorageImpl m_storage_impl;
 	ActivateImpl m_activate_impl;
-	AssertBoundsImpl const m_assert_bounds_impl{m_context_impl, m_size_impl, m_storage_impl};
+	AssertBoundsImpl m_assert_bounds_impl{m_context_impl, m_size_impl, m_storage_impl};
 	AccessImpl m_access_impl{m_size_impl, m_storage_impl, m_assert_bounds_impl};
 
 public:
@@ -335,12 +333,13 @@ public:
 		m_activate_impl.activate();
 	}
 
-//	ByRef(This const & other) noexcept
-//		: m_context_impl{other.m_context_impl},
-//		  m_size_impl{other.m_size_impl},
-//		  m_storage_impl{other.m_storage_impl},
-//		  m_activate_impl{
-//			  m_context_impl, m_size_impl, m_storage_impl, other.m_activate_impl.m_background} {};
+	//	ByRef(This const & other) noexcept
+	//		: m_context_impl{other.m_context_impl},
+	//		  m_size_impl{other.m_size_impl},
+	//		  m_storage_impl{other.m_storage_impl},
+	//		  m_activate_impl{
+	//			  m_context_impl, m_size_impl, m_storage_impl, other.m_activate_impl.m_background}
+	//{};
 
 	ByRef(This && other_) noexcept = default;
 
@@ -359,11 +358,11 @@ public:
 	{
 		return m_storage_impl.storage(std::forward<decltype(args_)>(args_)...);
 	}
-	decltype(auto) storage(auto &&... args_) const noexcept
+	[[nodiscard]] decltype(auto) storage(auto &&... args_) const noexcept
 	{
 		return m_storage_impl.storage(std::forward<decltype(args_)>(args_)...);
 	}
-	decltype(auto) index(auto &&... args_) const noexcept
+	[[nodiscard]] decltype(auto) index(auto &&... args_) const noexcept
 	{
 		return m_size_impl.index(std::forward<decltype(args_)>(args_)...);
 	}
@@ -371,7 +370,7 @@ public:
 	{
 		return m_access_impl.get(pos_);
 	}
-	decltype(auto) get(VecDi const & pos_) const noexcept
+	[[nodiscard]] decltype(auto) get(VecDi const & pos_) const noexcept
 	{
 		return m_access_impl.get(pos_);
 	}
@@ -379,15 +378,15 @@ public:
 	{
 		return m_access_impl.get(std::forward<decltype(args_)>(args_)...);
 	}
-	decltype(auto) get(auto &&... args_) const noexcept
+	[[nodiscard]] decltype(auto) get(auto &&... args_) const noexcept
 	{
 		return m_access_impl.get(std::forward<decltype(args_)>(args_)...);
 	}
-	decltype(auto) offset(auto &&... args_) const noexcept
+	[[nodiscard]] decltype(auto) offset(auto &&... args_) const noexcept
 	{
 		return m_size_impl.offset(std::forward<decltype(args_)>(args_)...);
 	}
-	decltype(auto) size(auto &&... args_) const noexcept
+	[[nodiscard]] decltype(auto) size(auto &&... args_) const noexcept
 	{
 		return m_size_impl.size(std::forward<decltype(args_)>(args_)...);
 	}
@@ -454,11 +453,11 @@ public:
 	{
 		return m_storage_impl.storage(std::forward<decltype(args_)>(args_)...);
 	}
-	decltype(auto) storage(auto &&... args_) const noexcept
+	[[nodiscard]] decltype(auto) storage(auto &&... args_) const noexcept
 	{
 		return m_storage_impl.storage(std::forward<decltype(args_)>(args_)...);
 	}
-	decltype(auto) index(auto &&... args_) const noexcept
+	[[nodiscard]] decltype(auto) index(auto &&... args_) const noexcept
 	{
 		return m_size_impl.index(std::forward<decltype(args_)>(args_)...);
 	}
@@ -466,7 +465,7 @@ public:
 	{
 		return m_access_impl.get(pos_);
 	}
-	decltype(auto) get(VecDi const & pos_) const noexcept
+	[[nodiscard]] decltype(auto) get(VecDi const & pos_) const noexcept
 	{
 		return m_access_impl.get(pos_);
 	}
@@ -474,7 +473,7 @@ public:
 	{
 		return m_access_impl.get(std::forward<decltype(args_)>(args_)...);
 	}
-	decltype(auto) get(auto &&... args_) const noexcept
+	[[nodiscard]] [[nodiscard]] decltype(auto) get(auto &&... args_) const noexcept
 	{
 		return m_access_impl.get(std::forward<decltype(args_)>(args_)...);
 	}
@@ -482,11 +481,11 @@ public:
 	{
 		return m_access_impl.set(std::forward<decltype(args_)>(args_)...);
 	}
-	decltype(auto) offset(auto &&... args_) const noexcept
+	[[nodiscard]] decltype(auto) offset(auto &&... args_) const noexcept
 	{
 		return m_size_impl.offset(std::forward<decltype(args_)>(args_)...);
 	}
-	decltype(auto) size(auto &&... args_) const noexcept
+	[[nodiscard]] decltype(auto) size(auto &&... args_) const noexcept
 	{
 		return m_size_impl.size(std::forward<decltype(args_)>(args_)...);
 	}
@@ -502,7 +501,7 @@ public:
 	{
 		return m_matrix_impl.array(std::forward<decltype(args_)>(args_)...);
 	}
-	decltype(auto) matrix(auto &&... args_) const noexcept
+	[[nodiscard]] decltype(auto) matrix(auto &&... args_) const noexcept
 	{
 		return m_matrix_impl.matrix(std::forward<decltype(args_)>(args_)...);
 	}
@@ -543,7 +542,6 @@ public:
 		k_is_device_shared,
 		felt2::components::device::USMResizeableArray<Traits>,
 		felt2::components::DataArray<Traits>>;
-	using BytesImpl = felt2::components::StorageBytes<StorageImpl>;
 	using AssertBoundsImpl =
 		felt2::components::AssertBounds<Traits, ContextImpl, SizeImpl, StorageImpl>;
 	using MatrixImpl = felt2::components::MatrixColPerChild<Traits, StorageImpl, ChildrenSizeImpl>;
@@ -551,9 +549,8 @@ public:
 private:
 	RefIfChildT<ContextImpl, flags> m_context_impl;
 	StorageImpl m_storage_impl;
-	SizeImpl const m_size_impl;
-	ChildrenSizeImpl const m_children_size_impl;
-	BytesImpl m_bytes_impl{m_storage_impl};
+	SizeImpl m_size_impl;
+	ChildrenSizeImpl m_children_size_impl;
 	AssertBoundsImpl m_assert_bounds_impl{m_context_impl, m_size_impl, m_storage_impl};
 	MatrixImpl m_matrix_impl{m_storage_impl, m_children_size_impl};
 
@@ -623,55 +620,47 @@ public:
 		return unwrap_ref(self_.m_context_impl);
 	}
 
-	const ChildrenGrid & children() const noexcept
+	[[nodiscard]] const ChildrenGrid & children() const noexcept
 	{
 		return m_children;
 	}
 
-	ChildrenGrid & children() noexcept
+	[[nodiscard]] ChildrenGrid & children() noexcept
 	{
 		return m_children;
 	}
 
-	decltype(auto) storage(auto &&... args_) noexcept
+	[[nodiscard]] auto& storage(this auto && self_) noexcept
 	{
-		return m_storage_impl.storage(std::forward<decltype(args_)>(args_)...);
+		return self_.m_storage_impl.storage();
 	}
-	decltype(auto) storage(auto &&... args_) const noexcept
+	[[nodiscard]] auto bytes() noexcept
 	{
-		return m_storage_impl.storage(std::forward<decltype(args_)>(args_)...);
+		return std::as_writable_bytes(std::span{m_storage_impl.storage()});
 	}
-	decltype(auto) bytes(auto &&... args_) noexcept
+	[[nodiscard]] auto bytes() const noexcept
 	{
-		return m_bytes_impl.bytes(std::forward<decltype(args_)>(args_)...);
+		return std::as_bytes(std::span{m_storage_impl.storage()});
 	}
-	decltype(auto) bytes(auto &&... args_) const noexcept
+	[[nodiscard]] auto const& offset() const noexcept
 	{
-		return m_bytes_impl.bytes(std::forward<decltype(args_)>(args_)...);
+		return m_size_impl.offset();
 	}
-	decltype(auto) offset(auto &&... args_) const noexcept
+	[[nodiscard]] auto const& size() const noexcept
 	{
-		return m_size_impl.offset(std::forward<decltype(args_)>(args_)...);
+		return m_size_impl.size();
 	}
-	decltype(auto) size(auto &&... args_) const noexcept
+	[[nodiscard]] auto const& child_size() const noexcept
 	{
-		return m_size_impl.size(std::forward<decltype(args_)>(args_)...);
+		return m_children_size_impl.child_size();
 	}
-	decltype(auto) child_size(auto &&... args_) const noexcept
-	{
-		return m_children_size_impl.child_size(std::forward<decltype(args_)>(args_)...);
-	}
-	decltype(auto) inside(auto &&... args_) const noexcept
+	[[nodiscard]] auto inside(auto &&... args_) const noexcept
 	{
 		return m_size_impl.inside(std::forward<decltype(args_)>(args_)...);
 	}
-	decltype(auto) matrix(auto &&... args_) const noexcept
+	[[nodiscard]] decltype(auto) matrix(this auto && self_) noexcept
 	{
-		return m_matrix_impl.matrix(std::forward<decltype(args_)>(args_)...);
-	}
-	decltype(auto) matrix(auto &&... args_) noexcept
-	{
-		return m_matrix_impl.matrix(std::forward<decltype(args_)>(args_)...);
+		return self_.m_matrix_impl.matrix();
 	}
 
 private:

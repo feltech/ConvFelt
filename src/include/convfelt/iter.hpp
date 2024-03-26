@@ -26,18 +26,18 @@ namespace detail
 {
 // clang-format off
 template <typename T>
-concept Grid = requires(T v_)
+concept Grid = requires(T obj_)
 {
 	typename helpers::VecDiFor<T>;
-	{v_.offset()} -> ranges::convertible_to<helpers::VecDiFor<T>>;
-	{v_.size()} -> ranges::convertible_to<helpers::VecDiFor<T>>;
+	{obj_.offset()} -> ranges::convertible_to<helpers::VecDiFor<T>>;
+	{obj_.size()} -> ranges::convertible_to<helpers::VecDiFor<T>>;
 };
 
 template <typename T>
-concept GridWithStorage = requires(T v_)
+concept GridWithStorage = requires(T obj_)
 {
 	requires Grid<T>;
-	{v_.storage().size()} -> std::same_as<felt2::PosIdx>;
+	{obj_.storage().size()} -> std::same_as<felt2::PosIdx>;
 };
 // clang-format on
 }  // namespace detail
@@ -66,6 +66,7 @@ static constexpr auto pos_idx(concepts::GridWithStorage auto & grid_)
 	return idx(grid_.storage().size());
 };
 
+// NOLINTNEXTLINE(*-avoid-reference-coroutine-parameters
 static inline auto pos(concepts::Grid auto & grid_)
 	-> cppcoro::generator<concepts::helpers::VecDiFor<decltype(grid_)>>
 {
@@ -76,6 +77,7 @@ static inline auto pos(concepts::Grid auto & grid_)
 template <class G>
 using IdxAndPos = std::tuple<felt2::PosIdx, concepts::helpers::VecDiFor<G>>;
 
+// NOLINTNEXTLINE(*-avoid-reference-coroutine-parameters
 static inline auto idx_and_pos(concepts::Grid auto & grid_)
 	-> cppcoro::generator<IdxAndPos<decltype(grid_)>>
 {

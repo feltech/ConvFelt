@@ -40,6 +40,8 @@ macro(dynamic_project_options)
   else()
     set(SUPPORTS_UBSAN OFF)
   endif()
+  # TODO(DF): SYCL kernels fail with Unresolved extern function '__ubsan_handle_pointer_overflow'.
+  set(SUPPORTS_UBSAN OFF)
 
   if((CMAKE_CXX_COMPILER_ID MATCHES ".*Clang.*" OR CMAKE_CXX_COMPILER_ID MATCHES ".*GNU.*") AND WIN32)
     set(SUPPORTS_ASAN OFF)
@@ -76,8 +78,8 @@ macro(dynamic_project_options)
       "ENABLE_SANITIZER_ADDRESS\;OFF\;${SUPPORTS_ASAN}\;Make memory errors into hard runtime errors (windows/linux/macos)"
       "ENABLE_SANITIZER_UNDEFINED_BEHAVIOR\;OFF\;${SUPPORTS_UBSAN}\;Make certain types (numeric mostly) of undefined behavior into runtime errors"
       "ENABLE_CPPCHECK\;OFF\;${MAKEFILE_OR_NINJA}\;Enable cppcheck analysis during compilation"
-      "ENABLE_INTERPROCEDURAL_OPTIMIZATION\;OFF\;OFF\;Enable whole-program optimization (e.g. LTO)"
-      "ENABLE_NATIVE_OPTIMIZATION\;OFF\;OFF\;Enable the optimizations specific to the build machine (e.g. SSE4_1, AVX2, etc.)."
+      "ENABLE_INTERPROCEDURAL_OPTIMIZATION\;ON\;ON\;Enable whole-program optimization (e.g. LTO)"
+      "ENABLE_NATIVE_OPTIMIZATION\;ON\;ON\;Enable the optimizations specific to the build machine (e.g. SSE4_1, AVX2, etc.)."
       "ENABLE_INCLUDE_WHAT_YOU_USE\;OFF\;OFF\;Enable include-what-you-use analysis during compilation"
       "ENABLE_PCH\;OFF\;OFF\;Enable pre-compiled-headers support"
       "ENABLE_DOXYGEN\;OFF\;OFF\;Build documentation with Doxygen"

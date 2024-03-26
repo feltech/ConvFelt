@@ -8,6 +8,7 @@
 #include <memory>
 #include <span>
 #include <string_view>
+#include <vector>
 
 #include <etl/private/to_string_helper.h>
 #include <etl/string.h>
@@ -53,9 +54,7 @@ auto make_unique_sycl(
 {
 	auto * mem_region = sycl::malloc_shared<T>(count_, dev_, ctx_);
 	if (!mem_region)
-	{
 		throw std::runtime_error{"make_unique_sycl: sycl::malloc_shared failed"};
-	}
 	auto deleter = [ctx_](T * ptr_) { sycl::free(ptr_, ctx_); };
 	auto ptr = std::unique_ptr<T, decltype(deleter)>{mem_region, std::move(deleter)};
 
@@ -69,32 +68,25 @@ auto make_unique_sycl(sycl::device const & dev_, sycl::context const & ctx_, aut
 	return make_unique_sycl<T>(1, dev_, ctx_, std::forward<decltype(args_)>(args_)...);
 }
 
-template <class T>
-struct SyclDeleter
-{
-	sycl::context ctx;
-	void operator()(T * ptr_)
-	{
-		sycl::free(ptr_, ctx);
-	}
-};
-
-template <typename T>
-auto make_unique_sycl_array(sycl::queue const & queue_, std::size_t const size_)
-{
-	auto * mem_region = sycl::malloc_shared<T>(size_, queue_);
-	auto ptr =
-		std::unique_ptr<T[], SyclDeleter<T>>{mem_region, SyclDeleter<T>{queue_.get_context()}};
-	return std::move(ptr);
-}
-
 template <typename T>
 auto make_unique_sycl_array(
 	sycl::device const & dev_, sycl::context const & ctx_, std::size_t const size_)
 {
+	auto deleter = [ctx_](T * ptr_) { sycl::free(ptr_, ctx_); };
 	auto * mem_region = sycl::malloc_shared<T>(size_, dev_, ctx_);
-	auto ptr = std::unique_ptr<T[], SyclDeleter<T>>{mem_region, SyclDeleter<T>{ctx_}};
+	if (!mem_region)
+		throw std::runtime_error{"make_unique_sycl_array: sycl::malloc_shared failed"};
+	auto ptr =
+		// TODO(DF): Could perhaps use std::array for this instead:
+		// NOLINTNEXTLINE(*-avoid-c-arrays)
+		std::unique_ptr<T[], decltype(deleter)>{mem_region, std::move(deleter)};
 	return std::move(ptr);
+}
+
+template <typename T>
+auto make_unique_sycl_array(sycl::queue const & queue_, std::size_t const size_)
+{
+	return make_unique_sycl_array<T>(queue_.get_device(), queue_.get_context(), size_);
 }
 
 template <typename T>
@@ -134,7 +126,6 @@ struct Context
 		return self_.m_ctx;
 	}
 };
-
 
 template <HasLeafType Traits>
 struct USMRawArray
@@ -179,7 +170,7 @@ struct USMResizeableArray
 		return m_data;
 	}
 
-	Array const & storage() const
+	[[nodiscard]] Array const & storage() const
 	{
 		return m_data;
 	}
@@ -219,8 +210,7 @@ struct Log
 	std::span<etl::string_ext> strs;
 	mutable sycl::private_ptr<std::size_t const> stream_id;
 
-	template <class... Args>
-	constexpr bool log(Args &&... args_) const noexcept
+	constexpr bool log(auto... args_) const noexcept
 	{
 		if (strs.empty())
 			return false;

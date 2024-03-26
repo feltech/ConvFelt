@@ -10,9 +10,9 @@ namespace convfelt::network
 class Network
 {
 public:
-	static Network from_yaml(std::string_view yaml);
+	[[nodiscard]] static Network from_yaml(std::string_view yaml_);
 	void initialise_with_random_weights();
-	std::string to_yaml() const;
+	[[nodiscard]] std::string to_yaml() const;
 };
 
 } // namespace convfelt::network
