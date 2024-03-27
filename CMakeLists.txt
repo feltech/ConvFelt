@@ -13,15 +13,6 @@ project(ConvFelt VERSION 1.0.0)
 
 set(CMAKE_CXX_STANDARD 23)
 
-if (CONVFELT_ENABLE_TESTS)
-	# Tests install the project first, so default the install directory to be relative to the build
-	# root. This must come before `dynamic_project_options()`
-	if (CMAKE_INSTALL_PREFIX_INITIALIZED_TO_DEFAULT AND PROJECT_IS_TOP_LEVEL)
-		set(CMAKE_INSTALL_PREFIX "${PROJECT_BINARY_DIR}/dist"
-			CACHE PATH "Installation location" FORCE)
-	endif ()
-endif ()
-
 # For `generate_export_header`.
 include(GenerateExportHeader)
 # For `write_basic_package_version_file` et al.

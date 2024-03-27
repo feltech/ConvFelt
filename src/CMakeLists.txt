@@ -9,18 +9,24 @@ add_library(
 target_compile_features(
 	convfelt
 	PUBLIC
-	cxx_std_20
+	cxx_std_23
 )
 
-target_include_directories(
+file(GLOB_RECURSE _headers CONFIGURE_DEPENDS include/*.h include/*.hpp)
+
+target_sources(
 	convfelt
-	PUBLIC
-	$<BUILD_INTERFACE:${CMAKE_CURRENT_SOURCE_DIR}/include>
-	$<INSTALL_INTERFACE:${CMAKE_INSTALL_INCLUDEDIR}>
+	PUBLIC FILE_SET headers
+	TYPE HEADERS
+	BASE_DIRS include
+	FILES ${_headers}
 )
 
 target_link_libraries(
 	convfelt
+	PRIVATE
+	project_options
+	project_warnings
 	PUBLIC
 	range-v3::range-v3
 	cppcoro::cppcoro
@@ -45,14 +51,8 @@ target_compile_definitions(
 	EIGEN_NO_DEBUG=1
 )
 
-# TODO(DF): Use FILE_SET
-install(
-	DIRECTORY
-	${CMAKE_CURRENT_LIST_DIR}/include/convfelt
-	DESTINATION
-	${CMAKE_INSTALL_INCLUDEDIR}
-)
 install(
 	TARGETS convfelt
 	EXPORT ${PROJECT_NAME}_EXPORTED_TARGETS
+	FILE_SET headers
 )

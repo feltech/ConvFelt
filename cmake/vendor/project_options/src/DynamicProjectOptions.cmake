@@ -40,8 +40,6 @@ macro(dynamic_project_options)
   else()
     set(SUPPORTS_UBSAN OFF)
   endif()
-  # TODO(DF): SYCL kernels fail with Unresolved extern function '__ubsan_handle_pointer_overflow'.
-  set(SUPPORTS_UBSAN OFF)
 
   if((CMAKE_CXX_COMPILER_ID MATCHES ".*Clang.*" OR CMAKE_CXX_COMPILER_ID MATCHES ".*GNU.*") AND WIN32)
     set(SUPPORTS_ASAN OFF)

@@ -29,34 +29,10 @@ target_link_libraries(
 
 add_sycl_to_target(TARGET convfelt.test.unit)
 
-if (CMAKE_CXX_COMPILER_ID STREQUAL GNU)
-	target_compile_options(
-		convfelt.test.unit
-		PRIVATE
-		-fconcepts-diagnostics-depth=10
-	)
-endif ()
-
-target_compile_options(
-	convfelt.test.unit
-	PRIVATE
-	-ftemplate-backtrace-limit=0
-)
-
 target_compile_definitions(
 	convfelt.test.unit
 	PRIVATE
 	CONVFELT_TEST_RESOURCE_DIR=\"${PROJECT_SOURCE_DIR}/tests/resources\"
 	# Disable fatal assertions.
 	FELT2_DEBUG_NONFATAL
-)
-
-target_link_options(
-	convfelt.test.unit
-	PRIVATE
-	# oneMKL does not have RUNPATH set to locate sibling libraries, so use RPATH behaviour so that
-	# our link search path is transient. In the build tree, CMake will set the RPATH of our binary
-	# to include the link_directories of the oneML library (see ThirdParty.cmake). This is useful
-	# for unit tests, since they run in the build tree.
-	-Wl,--disable-new-dtags
 )
