@@ -208,7 +208,7 @@ struct Log
 	};
 
 	std::span<etl::string_ext> strs;
-	mutable sycl::private_ptr<std::size_t const> stream_id;
+	mutable sycl::private_ptr<std::size_t const> stream_id{nullptr};
 
 	constexpr bool log(auto... args_) const noexcept
 	{

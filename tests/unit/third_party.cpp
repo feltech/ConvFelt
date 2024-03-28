@@ -1505,6 +1505,9 @@ SCENARIO("Applying filter to ConvGrid")
 							 filter_input_grid_device =
 								 filter_input_grid_device.get()](sycl::item<1> item_)
 							{
+								std::size_t const tid = item_.get_linear_id();
+								image_grid_device->context().logger().set_stream(&tid);
+								filter_input_grid_device->context().logger().set_stream(&tid);
 								auto & filter_inputs = filter_input_grid_device->children();
 
 								felt2::PosIdx const input_pos_idx = item_.get_linear_id();
