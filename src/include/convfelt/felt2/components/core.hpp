@@ -450,6 +450,7 @@ struct AssertBounds
 				title_,
 				" assert_pos_bounds",
 				pos_,
+				" not in ",
 				m_size_impl.get().offset(),
 				" - ",
 				k_max_extent,
