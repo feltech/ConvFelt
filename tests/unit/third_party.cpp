@@ -17,7 +17,7 @@
 #include <OpenImageIO/typedesc.h>
 #include <catch2/catch_message.hpp>
 #include <etl/string.h>
-#include <experimental/mdspan>  // NOLINT(misc-include-cleaner)
+#include <experimental/mdspan>	// NOLINT(misc-include-cleaner)
 #include <fmt/format.h>
 #include <oneapi/mkl/blas.hpp>
 #include <oneapi/mkl/types.hpp>
@@ -73,7 +73,7 @@ SCENARIO("Using OpenImageIO with cppcoro and loading into Felt grid")
 	GIVEN("a simple monochrome image file")
 	{
 		static constexpr std::string_view k_file_path = CONVFELT_TEST_RESOURCE_DIR "/plus.png";
-		using Pixel = felt2::VecDT<float, 3>;
+		using Pixel = Eigen::VectorXf;
 
 		WHEN("image file is loaded")
 		{
@@ -86,30 +86,33 @@ SCENARIO("Using OpenImageIO with cppcoro and loading into Felt grid")
 
 			OIIO::ImageBuf const image = cppcoro::sync_wait(task());
 
+			CAPTURE(image.geterror(false));
+			REQUIRE(!image.has_error());
+
 			THEN("file has expected properties")
 			{
 				CHECK(image.spec().height == 128);
 				CHECK(image.spec().width == 128);
 				CHECK(image.spec().nchannels == 3);
 				{
-					Pixel pixel;
-					image.getpixel(0, 0, pixel.data(), 3);
-					CHECK(pixel == Pixel{0, 0, 0});
-					image.getpixel(0, 127, pixel.data(), 3);
-					CHECK(pixel == Pixel{0, 0, 0});
-					image.getpixel(127, 0, pixel.data(), 3);
-					CHECK(pixel == Pixel{0, 0, 0});
-					image.getpixel(127, 127, pixel.data(), 3);
-					CHECK(pixel == Pixel{0, 0, 0});
+					Pixel pixel(image.spec().nchannels);
+					image.getpixel(0, 0, pixel.data(), static_cast<int>(pixel.size()));
+					CHECK(pixel == Pixel::Constant(image.spec().nchannels, 0));
+					image.getpixel(0, 127, pixel.data(), static_cast<int>(pixel.size()));
+					CHECK(pixel == Pixel::Constant(image.spec().nchannels, 0));
+					image.getpixel(127, 0, pixel.data(), static_cast<int>(pixel.size()));
+					CHECK(pixel == Pixel::Constant(image.spec().nchannels, 0));
+					image.getpixel(127, 127, pixel.data(), static_cast<int>(pixel.size()));
+					CHECK(pixel == Pixel::Constant(image.spec().nchannels, 0));
 
-					image.getpixel(64, 0, pixel.data(), 3);
-					CHECK(pixel == Pixel{1, 1, 1});
-					image.getpixel(127, 64, pixel.data(), 3);
-					CHECK(pixel == Pixel{1, 1, 1});
-					image.getpixel(64, 127, pixel.data(), 3);
-					CHECK(pixel == Pixel{1, 1, 1});
-					image.getpixel(0, 64, pixel.data(), 3);
-					CHECK(pixel == Pixel{1, 1, 1});
+					image.getpixel(64, 0, pixel.data(), static_cast<int>(pixel.size()));
+					CHECK(pixel == Pixel::Constant(image.spec().nchannels, 1));
+					image.getpixel(127, 64, pixel.data(), static_cast<int>(pixel.size()));
+					CHECK(pixel == Pixel::Constant(image.spec().nchannels, 1));
+					image.getpixel(64, 127, pixel.data(), static_cast<int>(pixel.size()));
+					CHECK(pixel == Pixel::Constant(image.spec().nchannels, 1));
+					image.getpixel(0, 64, pixel.data(), static_cast<int>(pixel.size()));
+					CHECK(pixel == Pixel::Constant(image.spec().nchannels, 1));
 				}
 			}
 
@@ -132,8 +135,8 @@ SCENARIO("Using OpenImageIO with cppcoro and loading into Felt grid")
 					for (auto x : convfelt::iter::idx(image_grid.size().x()))
 						for (auto y : convfelt::iter::idx(image_grid.size().y()))
 						{
-							Pixel pixel;
-							image.getpixel(y, x, pixel.data(), 3);
+							Pixel pixel(image.spec().nchannels);
+							image.getpixel(y, x, pixel.data(), static_cast<int>(pixel.size()));
 							for (auto z : convfelt::iter::idx(image_grid.size().z()))
 							{
 								CAPTURE(x, y, z);
@@ -176,8 +179,9 @@ SCENARIO("Using OpenImageIO with cppcoro and loading into Felt grid")
 							}
 							else
 							{
-								Pixel pixel;
-								image.getpixel(y - 1, x - 1, pixel.data(), 3);
+								Pixel pixel(image.spec().nchannels);
+								image.getpixel(
+									y - 1, x - 1, pixel.data(), static_cast<int>(pixel.size()));
 								for (auto z : convfelt::iter::idx(image_grid.size().z()))
 								{
 									CAPTURE(x, y, z);
@@ -788,6 +792,8 @@ SCENARIO("Input/output ConvGrids")
 	{
 		static constexpr std::string_view k_file_path = CONVFELT_TEST_RESOURCE_DIR "/plus.png";
 		OIIO::ImageBuf image{std::string{k_file_path}};
+		CAPTURE(image.geterror(false));
+		REQUIRE(!image.has_error());
 		image.read();
 		auto image_grid_spec = image.spec();
 		image_grid_spec.width += 2;
@@ -1412,7 +1418,9 @@ SCENARIO("Applying filter to ConvGrid")
 	GIVEN("a simple monochrome image file loaded with 1 pixel of zero padding")
 	{
 		static constexpr std::string_view k_file_path = CONVFELT_TEST_RESOURCE_DIR "/plus.png";
-		OIIO::ImageBuf image{std::string{k_file_path}}; // NOLINT(misc-const-correctness)
+		OIIO::ImageBuf image{std::string{k_file_path}};	 // NOLINT(misc-const-correctness)
+		CAPTURE(image.geterror(false));
+		REQUIRE(!image.has_error());
 		image.read();
 		auto image_grid_spec = image.spec();
 		image_grid_spec.width += 2;
@@ -1439,7 +1447,8 @@ SCENARIO("Applying filter to ConvGrid")
 			using FilterGrid =
 				convfelt::ConvGridTD<felt2::Scalar, 3, convfelt::GridFlag::is_device_shared>;
 
-			FilterSizeHelper const filter_input_sizer{felt2::Vec3i{4, 4, 3}, felt2::Vec3i{2, 2, 0}};
+			FilterSizeHelper const filter_input_sizer{
+				felt2::Vec3i{4, 4, image_grid.size()(2)}, felt2::Vec3i{2, 2, 0}};
 
 			auto input_size = filter_input_sizer.input_size_from_source_size(image_grid.size());
 
@@ -1528,8 +1537,12 @@ SCENARIO("Applying filter to ConvGrid")
 							});
 					});
 				queue.wait_and_throw();
+
 				THEN("device grid matches expected grid")
 				{
+					REQUIRE(!filter_input_grid_device->context().logger().has_logs());
+					REQUIRE(!image_grid_device->context().logger().has_logs());
+
 					CHECK(filter_input_grid->size() == filter_input_grid_device->size());
 					CHECK(
 						filter_input_grid->children().size() ==
