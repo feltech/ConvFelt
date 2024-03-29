@@ -13,6 +13,7 @@ AlignOperands: DontAlign
 AllowAllParametersOfDeclarationOnNextLine: true
 DerivePointerAlignment: false
 PointerAlignment: Middle
+QualifierAlignment: Right
 BinPackArguments: false
 BinPackParameters: false
 AllowShortIfStatementsOnASingleLine: Never

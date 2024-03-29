@@ -18,7 +18,7 @@ namespace felt2
  * @return index in data array of pos in grid of given size and offset.
  */
 template <Dim D>
-PosIdx index(const VecDi<D> & pos_, const VecDi<D> & size_, const VecDi<D> & offset_)
+PosIdx index(VecDi<D> const & pos_, VecDi<D> const & size_, VecDi<D> const & offset_)
 {
 	using AxisCoord = typename VecDi<D>::Scalar;
 
@@ -42,15 +42,13 @@ PosIdx index(const VecDi<D> & pos_, const VecDi<D> & size_, const VecDi<D> & off
  * the position vector that the index pertains to in a representative
  * 1D array.
  *
- * @snippet test_Grid.cpp Position index
- *
- * @param idx_ index in to query.
+ * @param idx_ index to query.
  * @param size_ size of grid.
  * @param offset_ spatial offset of grid.
  * @return position that the given index would represent in a grid of given size and offset.
  */
 template <Dim D>
-VecDi<D> index(PosIdx idx_, const VecDi<D> & size_, const VecDi<D> & offset_ = VecDi<D>::Zero())
+VecDi<D> index(PosIdx idx_, VecDi<D> const & size_, VecDi<D> const & offset_ = VecDi<D>::Zero())
 {
 	/*
 	Eg. 2D: row major order (3x4=12): (x,y)[idx] =>
@@ -87,7 +85,7 @@ VecDi<D> index(PosIdx idx_, const VecDi<D> & size_, const VecDi<D> & offset_ = V
  * @return true if position lies inside the grid, false otherwise.
  */
 template <typename TPos, typename TBounds>
-bool inside(const TPos & pos_, const TBounds & pos_min_, const TBounds & pos_max_)
+bool inside(TPos const & pos_, TBounds const & pos_min_, TBounds const & pos_max_)
 {
 	for (Dim i = 0; i < pos_.size(); i++)
 	{
