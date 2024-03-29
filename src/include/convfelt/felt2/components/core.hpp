@@ -334,42 +334,6 @@ struct Size
 	{
 		return felt2::inside(pos_, m_offset, m_offset_plus_size);
 	}
-};
-
-template <HasDims Traits>
-struct ResizableSize
-{
-	/// Dimension of the grid.
-	static constexpr Dim k_dims = Traits::k_dims;
-	/// D-dimensional signed integer vector.
-	using VecDi = VecDi<k_dims>;
-
-	/// The dimensions (size) of the grid.
-	VecDi m_size;
-	/// The translational offset of the grid's zero coordinate.
-	VecDi m_offset;
-	/// Cache for use in `inside`.
-	VecDi m_offset_plus_size{m_offset + m_size};
-
-	[[nodiscard]] const VecDi & size() const noexcept
-	{
-		return m_size;
-	}
-
-	VecDi & size() noexcept
-	{
-		return m_size;
-	}
-
-	[[nodiscard]] const VecDi & offset() const noexcept
-	{
-		return m_offset;
-	}
-
-	VecDi & offset() noexcept
-	{
-		return m_offset;
-	}
 
 	void resize(VecDi const & size_, VecDi const & offset_) noexcept
 	{

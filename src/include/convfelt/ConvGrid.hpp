@@ -407,7 +407,7 @@ public:
 	using VecDi = felt2::VecDi<Traits::k_dims>;
 	using Leaf = typename Traits::Leaf;
 
-	using SizeImpl = felt2::components::ResizableSize<Traits>;
+	using SizeImpl = felt2::components::Size<Traits>;
 	using StorageImpl = felt2::components::DataArraySpan<Traits>;
 	using ContextImpl = HostOrDeviceContextT<flags>;
 	using AssertBoundsImpl =
