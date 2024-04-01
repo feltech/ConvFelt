@@ -27,7 +27,8 @@ struct EigenMap
 	constexpr ColArrayMap array() noexcept
 	{
 		return ColArrayMap(
-			m_storage_impl.get().storage().data(), Eigen::Index(m_storage_impl.get().storage().size()));
+			m_storage_impl.get().storage().data(),
+			Eigen::Index(m_storage_impl.get().storage().size()));
 	}
 	/**
 	 * Map the raw data to a (row-major) Eigen::Map, which can be used for BLAS arithmetic.
@@ -37,13 +38,15 @@ struct EigenMap
 	constexpr ColVectorMap matrix() noexcept
 	{
 		return ColVectorMap(
-			m_storage_impl.get().storage().data(), Eigen::Index(m_storage_impl.get().storage().size()));
+			m_storage_impl.get().storage().data(),
+			Eigen::Index(m_storage_impl.get().storage().size()));
 	}
 
 	[[nodiscard]] constexpr ColVectorMap matrix() const noexcept
 	{
 		return ColVectorMap(
-			m_storage_impl.get().storage().data(), Eigen::Index(m_storage_impl.get().storage().size()));
+			m_storage_impl.get().storage().data(),
+			Eigen::Index(m_storage_impl.get().storage().size()));
 	}
 };
 

@@ -16,7 +16,7 @@ target_link_libraries(
 
 add_test(
 	NAME convfelt.test.feature
-#	COMMAND convfelt.test.feature
+	#	COMMAND convfelt.test.feature
 	COMMAND $<TARGET_FILE:convfelt.test.feature> --options "--strict"
 	WORKING_DIRECTORY ${CMAKE_CURRENT_SOURCE_DIR}/features
 )

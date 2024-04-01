@@ -21,4 +21,4 @@ std::string Network::to_yaml() const
 }
 
 void Network::initialise_with_random_weights() {}
-} // namespace convfelt::network
+}  // namespace convfelt::network

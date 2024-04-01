@@ -709,7 +709,7 @@ SCENARIO("Transforming source image points to filter input grid points and vice 
 				filter_stride,
 				source_size,
 				source_pos,
-				[&](const felt2::Vec3i & pos_) { input_pos_list.push_back(pos_); });
+				[&](felt2::Vec3i const & pos_) { input_pos_list.push_back(pos_); });
 
 			THEN("source point maps to a single input grid point at the minimum of the input grid")
 			{
@@ -729,7 +729,7 @@ SCENARIO("Transforming source image points to filter input grid points and vice 
 				filter_stride,
 				source_size,
 				source_pos,
-				[&](const felt2::Vec3i & pos_) { input_pos_list.push_back(pos_); });
+				[&](felt2::Vec3i const & pos_) { input_pos_list.push_back(pos_); });
 
 			THEN("source point maps to a single input grid point at the maximum of the input grid")
 			{
@@ -749,7 +749,7 @@ SCENARIO("Transforming source image points to filter input grid points and vice 
 				filter_stride,
 				source_size,
 				source_pos,
-				[&](const felt2::Vec3i & pos_) { input_pos_list.push_back(pos_); });
+				[&](felt2::Vec3i const & pos_) { input_pos_list.push_back(pos_); });
 
 			THEN("source point maps to 2 separate filter inputs")
 			{
@@ -769,7 +769,7 @@ SCENARIO("Transforming source image points to filter input grid points and vice 
 				filter_stride,
 				source_size,
 				source_pos,
-				[&](const felt2::Vec3i & filter_pos_, const felt2::Vec3i & global_pos_)
+				[&](felt2::Vec3i const & filter_pos_, felt2::Vec3i const & global_pos_)
 				{
 					filter_pos_list.push_back(filter_pos_);
 					global_pos_list.push_back(global_pos_);
@@ -823,13 +823,13 @@ SCENARIO("Input/output ConvGrids")
 			for (auto const & [filter_pos_idx, filter] :
 				 convfelt::iter::idx_and_val(filter_input_grid.children()))
 			{
-				const felt2::Vec3i input_pos_start =
+				felt2::Vec3i const input_pos_start =
 					filter_input_sizer.input_start_pos_from_filter_pos(
 						filter_input_grid.children().index(filter_pos_idx));
 
 				for (felt2::PosIdx const local_pos_idx : convfelt::iter::pos_idx(filter))
 				{
-					const felt2::Vec3i input_pos =
+					felt2::Vec3i const input_pos =
 						input_pos_start + felt2::index(local_pos_idx, filter.size());
 
 					filter.set(local_pos_idx, image_grid.get(input_pos));
@@ -1010,7 +1010,7 @@ SCENARIO("Basic SyCL usage")
 					queue.wait_and_throw();
 					FAIL("Should have thrown");
 				}
-				catch (const std::exception & exc)
+				catch (std::exception const & exc)
 				{
 					std::string const error_message{exc.what()};
 					CHECK_THAT(
@@ -1462,13 +1462,13 @@ SCENARIO("Applying filter to ConvGrid")
 			for (auto const & [filter_pos_idx, filter] :
 				 convfelt::iter::idx_and_val(filter_input_grid->children()))
 			{
-				const felt2::Vec3i input_pos_start =
+				felt2::Vec3i const input_pos_start =
 					filter_input_sizer.input_start_pos_from_filter_pos(
 						filter_input_grid->children().index(filter_pos_idx));
 
 				for (felt2::PosIdx const local_pos_idx : convfelt::iter::pos_idx(filter))
 				{
-					const felt2::Vec3i input_pos =
+					felt2::Vec3i const input_pos =
 						input_pos_start + felt2::index(local_pos_idx, filter.size());
 
 					filter.set(local_pos_idx, image_grid.get(input_pos));

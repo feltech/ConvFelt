@@ -173,8 +173,8 @@ private:
 public:
 	ByValue(
 		decltype(m_context_impl) context_,
-		const VecDi & size_,
-		const VecDi & offset_,
+		VecDi const & size_,
+		VecDi const & offset_,
 		Leaf background_) requires(k_is_device_shared)
 		: m_context_impl{std::move(context_)},
 		  m_size_impl{size_, offset_},
@@ -186,8 +186,8 @@ public:
 
 	ByValue(
 		decltype(m_context_impl) context_,
-		const VecDi & size_,
-		const VecDi & offset_,
+		VecDi const & size_,
+		VecDi const & offset_,
 		Leaf background_) requires(!k_is_device_shared)
 		: m_context_impl{std::move(context_)},
 		  m_size_impl{size_, offset_},
@@ -565,7 +565,7 @@ public:
 	{
 	}
 
-	ConvGridTD(decltype(m_context_impl) context_, const VecDi & size_, const VecDi & child_size_)
+	ConvGridTD(decltype(m_context_impl) context_, VecDi const & size_, VecDi const & child_size_)
 		: ConvGridTD{context_, size_, child_size_, {0, 0, 0}}
 	{
 		assert(
@@ -620,7 +620,7 @@ public:
 		return unwrap_ref(self_.m_context_impl);
 	}
 
-	[[nodiscard]] const ChildrenGrid & children() const noexcept
+	[[nodiscard]] ChildrenGrid const & children() const noexcept
 	{
 		return m_children;
 	}
@@ -630,7 +630,7 @@ public:
 		return m_children;
 	}
 
-	[[nodiscard]] auto& storage(this auto && self_) noexcept
+	[[nodiscard]] auto & storage(this auto && self_) noexcept
 	{
 		return self_.m_storage_impl.storage();
 	}
@@ -642,15 +642,15 @@ public:
 	{
 		return std::as_bytes(std::span{m_storage_impl.storage()});
 	}
-	[[nodiscard]] auto const& offset() const noexcept
+	[[nodiscard]] auto const & offset() const noexcept
 	{
 		return m_size_impl.offset();
 	}
-	[[nodiscard]] auto const& size() const noexcept
+	[[nodiscard]] auto const & size() const noexcept
 	{
 		return m_size_impl.size();
 	}
-	[[nodiscard]] auto const& child_size() const noexcept
+	[[nodiscard]] auto const & child_size() const noexcept
 	{
 		return m_children_size_impl.child_size();
 	}
@@ -672,7 +672,7 @@ private:
 			"Depth of children must be same as depth of parent");
 	}
 
-	VecDi window_to_size(const felt2::VecDi<D - 1> & window_, const VecDi & size_)
+	VecDi window_to_size(felt2::VecDi<D - 1> const & window_, VecDi const & size_)
 	{
 		VecDi child_size;
 		child_size << window_, size_(size_.size() - 1);
@@ -714,15 +714,15 @@ private:
 public:
 	TemplateParentGridTD(
 		decltype(m_context_impl) context_,
-		const VecDi & size_,
-		const felt2::VecDi<D - 1> & child_window_)
+		VecDi const & size_,
+		felt2::VecDi<D - 1> const & child_window_)
 		: TemplateParentGridTD{
 			  std::move(context_), size_, window_to_size(child_window_, size_), {0, 0, 0}}
 	{
 	}
 
 	TemplateParentGridTD(
-		decltype(m_context_impl) context_, const VecDi & size_, const VecDi & child_size_)
+		decltype(m_context_impl) context_, VecDi const & size_, VecDi const & child_size_)
 		: TemplateParentGridTD{std::move(context_), size_, child_size_, {0, 0, 0}}
 	{
 		assert(
@@ -732,8 +732,8 @@ public:
 
 	TemplateParentGridTD(
 		decltype(m_context_impl) context_,
-		const VecDi & size_,
-		const felt2::VecDi<D - 1> & child_window_) requires(k_is_device_shared)
+		VecDi const & size_,
+		felt2::VecDi<D - 1> const & child_window_) requires(k_is_device_shared)
 		: m_context_impl{std::move(context_)},
 		  m_size_impl{size_, {0, 0, 0}},
 		  m_children_size_impl{m_size_impl, window_to_size(child_window_, m_size_impl.size())},
@@ -745,9 +745,9 @@ public:
 
 	TemplateParentGridTD(
 		decltype(m_context_impl) context_,
-		const VecDi & size_,
-		const VecDi & child_size_,
-		const VecDi & offset_) requires(!k_is_device_shared)
+		VecDi const & size_,
+		VecDi const & child_size_,
+		VecDi const & offset_) requires(!k_is_device_shared)
 		: m_context_impl{std::move(context_)},
 		  m_size_impl{size_, offset_},
 		  m_children_size_impl{m_size_impl, child_size_},
@@ -786,7 +786,7 @@ private:
 			"Depth of children must be same as depth of parent");
 	}
 
-	VecDi window_to_size(const felt2::VecDi<D - 1> & window_, const VecDi & size_)
+	VecDi window_to_size(felt2::VecDi<D - 1> const & window_, VecDi const & size_)
 	{
 		VecDi child_size;
 		child_size << window_, size_(size_.size() - 1);

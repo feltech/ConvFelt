@@ -95,7 +95,9 @@ THEN("input YAML matches output YAML")
 	try
 	{
 		BOOST_TEST(ctx->input_spec == ctx->output_spec);
-	} catch (const std::exception& exc) {
+	}
+	catch (std::exception const & exc)
+	{
 		fmt::print(exc.what());
 		throw;
 	}

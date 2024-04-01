@@ -23,10 +23,10 @@ namespace etl::private_to_string
 {
 
 template <typename TIString, typename T, felt2::Dim D>
-const TIString & to_string(
-	const felt2::VecDT<T, D> & value_,
+TIString const & to_string(
+	felt2::VecDT<T, D> const & value_,
 	TIString & str_,
-	const etl::basic_format_spec<TIString> & format_,
+	etl::basic_format_spec<TIString> const & format_,
 	bool append_ = false)
 {
 	str_ += "(";

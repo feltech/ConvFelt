@@ -15,4 +15,4 @@ public:
 	[[nodiscard]] std::string to_yaml() const;
 };
 
-} // namespace convfelt::network
+}  // namespace convfelt::network
