@@ -303,10 +303,10 @@ struct FilterSizeHelper
 	static VecDi input_size_from_source_and_filter_size(
 		VecDi const & filter_size_, VecDi const & filter_stride_, VecDi const & source_size_)
 	{
-		VecDi const input_per_filter_size = num_filter_regions_from_source_and_filter_size(
+		VecDi const num_filter_regions = num_filter_regions_from_source_and_filter_size(
 			filter_size_, filter_stride_, source_size_);
 
-		return (input_per_filter_size.array() * filter_size_.array()).matrix();
+		return (num_filter_regions.array() * filter_size_.array()).matrix();
 	}
 
 	/**
@@ -1022,7 +1022,6 @@ SCENARIO("Basic SyCL usage")
 		}
 	}
 }
-#pragma clang diagnostic pop
 
 SCENARIO("Basic oneMKL usage")
 {
@@ -1337,7 +1336,7 @@ SCENARIO("SyCL with ConvGrid")
 
 			sycl::queue queue{ctx, dev, &async_handler};  // NOLINT(misc-const-correctness)
 
-			[[maybe_unused]] auto const log_storage = felt2::components::device::Log::make_storage(
+			[[maybe_unused]] auto log_storage = felt2::components::device::Log::make_storage(
 				queue.get_device(), queue.get_context(), work_items.get(0), 1024UL);
 			pgrid->context().logger().set_storage(log_storage);
 
@@ -1498,7 +1497,7 @@ SCENARIO("Applying filter to ConvGrid")
 				sycl::range<1> const work_items{image_grid_device->storage().size()};
 				sycl::queue queue{ctx, dev, &async_handler};  // NOLINT(misc-const-correctness)
 
-				[[maybe_unused]] auto const log_storage =
+				[[maybe_unused]] auto log_storage =
 					felt2::components::device::Log::make_storage(
 						queue.get_device(), queue.get_context(), work_items.get(0), 1024UL);
 				image_grid_device->context().logger().set_storage(log_storage);
@@ -1818,7 +1817,7 @@ SCENARIO("Applying filter to ConvGrid")
 					sycl::nd_range<1> const work_range{
 						num_work_groups * work_group_size, work_group_size};
 
-					[[maybe_unused]] auto const log_storage =
+					[[maybe_unused]] auto log_storage =
 						felt2::components::device::Log::make_storage(
 							queue.get_device(),
 							queue.get_context(),

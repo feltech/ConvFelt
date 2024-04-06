@@ -15,6 +15,8 @@
 #include <experimental/mdspan>
 #include <sycl/sycl.hpp>
 
+#include <range/v3/all.hpp>
+
 #include "./core.hpp"
 
 namespace stdx = std::experimental;
@@ -201,13 +203,16 @@ struct Log
 {
 	struct Storage
 	{
-		UniqueSyclArrayT<char> char_data;
-		// Cannot be std::vector since no copy constructor.
-		UniqueSyclArrayT<etl::string_ext> str_data;
-		std::span<etl::string_ext> strs;
+		template <typename T>
+		using UsmArray = std::vector<T, sycl::usm_allocator<T, sycl::usm::alloc::shared>>;
+
+		UsmArray<char> buffer;
+		// Use optional to work around lack of default/copy construction of string_ext when
+		// creating a fixed size vector.
+		UsmArray<std::optional<etl::string_ext>> strs;
 	};
 
-	std::span<etl::string_ext> strs;
+	std::span<std::optional<etl::string_ext>> strs;
 	mutable sycl::private_ptr<std::size_t const> stream_id{nullptr};
 
 	constexpr bool log(auto... args_) const noexcept
@@ -217,7 +222,7 @@ struct Log
 
 		std::size_t const stream_idx = stream_id ? *stream_id : 0;
 
-		etl::string_ext & str = strs[stream_idx % strs.size()];
+		etl::string_ext & str = *strs[stream_idx % strs.size()];
 
 		(
 			[&]
@@ -239,15 +244,15 @@ struct Log
 
 	[[nodiscard]] constexpr bool has_logs() const noexcept
 	{
-		return !std::ranges::all_of(strs, [](auto const & str_) { return str_.empty(); });
+		return !std::ranges::all_of(strs, [](auto const & str_) { return str_->empty(); });
 	}
 
 	[[nodiscard]] constexpr std::string_view text(std::size_t const stream_idx_) const noexcept
 	{
-		return std::string_view{strs[stream_idx_].data(), strs[stream_idx_].size()};
+		return std::string_view{strs[stream_idx_]->data(), strs[stream_idx_]->size()};
 	}
 
-	void set_storage(Storage const & storage_)
+	void set_storage(Storage & storage_)
 	{
 		strs = storage_.strs;
 	}
@@ -263,16 +268,25 @@ struct Log
 		std::size_t const num_streams_,
 		std::size_t const max_msg_size_)
 	{
-		auto char_data = make_unique_sycl_array<char>(dev_, ctx_, num_streams_ * max_msg_size_);
-		auto str_data = make_unique_sycl_array<etl::string_ext>(dev_, ctx_, num_streams_);
-		std::span const str_data_span{str_data.get(), num_streams_};
-		Storage storage{std::move(char_data), std::move(str_data), str_data_span};
+		Storage storage{
+			.buffer = decltype(Storage::buffer)(num_streams_ * max_msg_size_, '\0', {ctx_, dev_}),
+			.strs = decltype(Storage::strs)(num_streams_, {ctx_, dev_})};
 
-		stdx::mdspan const char_data_span{storage.char_data.get(), num_streams_, max_msg_size_};
+		namespace rv = ranges::views;
 
-		for (std::size_t stream_idx = 0; stream_idx < num_streams_; ++stream_idx)
-			new (&str_data_span[stream_idx])
-				etl::string_ext{&char_data_span[stream_idx, 0], max_msg_size_};
+		// TODO(DF): Gone a bit overboard, could be simpler, but provides a reference for ranges and
+		// mdspan.
+
+		auto char_span_by_stream = rv::indices(storage.strs.size()) |
+			rv::transform([chars_by_stream =
+							   stdx::mdspan{storage.buffer.data(), num_streams_, max_msg_size_}](
+							  std::size_t idx)
+						  { return stdx::submdspan(chars_by_stream, idx, stdx::full_extent); }) |
+			rv::transform([](auto && stream_mdspan)
+						  { return std::span(stream_mdspan.data_handle(), stream_mdspan.size()); });
+
+		for (auto && [stream_str, stream_chars] : rv::zip(storage.strs, char_span_by_stream))
+			stream_str.emplace(stream_chars.data(), stream_chars.size());
 
 		return storage;
 	}
