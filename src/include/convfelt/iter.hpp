@@ -24,20 +24,26 @@ using VecDiFor = felt2::VecDi<k_dim_for<G>>;
 
 namespace detail
 {
+template <typename From, typename To>
+concept non_narrowing_convertible_from =
+	std::convertible_to<From, To> && // (1) conversion is possible
+	requires (To& val) { From{val}; };   // (2) this conversion isn't narrowing
+
+
 // clang-format off
 template <typename T>
 concept Grid = requires(T obj_)
 {
 	typename helpers::VecDiFor<T>;
-	{obj_.offset()} -> ranges::convertible_to<helpers::VecDiFor<T>>;
-	{obj_.size()} -> ranges::convertible_to<helpers::VecDiFor<T>>;
+	{obj_.offset()} -> std::convertible_to<helpers::VecDiFor<T>>;
+	{obj_.size()} -> non_narrowing_convertible_from<helpers::VecDiFor<T>>;
 };
 
 template <typename T>
 concept GridWithStorage = requires(T obj_)
 {
 	requires Grid<T>;
-	{obj_.storage().size()} -> std::same_as<felt2::PosIdx>;
+	{obj_.storage().size()} -> non_narrowing_convertible_from<felt2::PosIdx>;
 };
 // clang-format on
 }  // namespace detail
@@ -56,9 +62,9 @@ concept Integral = requires { ranges::integral<std::decay<T>>; };
 
 namespace iter
 {
-static constexpr auto idx(concepts::Integral auto... args_)
+static constexpr auto idx(std::integral auto... args_)
 {
-	return ranges::views::indices(std::forward<decltype(args_)>(args_)...);
+	return ranges::views::indices(args_...);
 };
 
 static constexpr auto pos_idx(concepts::GridWithStorage auto & grid_)

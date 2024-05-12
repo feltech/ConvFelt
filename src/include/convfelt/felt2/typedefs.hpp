@@ -10,8 +10,10 @@
 #include <Eigen/Core>
 #include <Eigen/Dense>
 
+#ifndef FELT2_DEBUG_ENABLED
 #ifndef FELT2_DEBUG_DISABLED
 #define FELT2_DEBUG_ENABLED NDEBUG
+#endif
 #endif
 
 #ifdef FELT2_DEBUG_ENABLED
@@ -29,6 +31,9 @@
 
 namespace felt2
 {
+using Signed = int32_t;
+using Unsigned = std::size_t;
+
 /**
  * Scalar.
  */
@@ -36,15 +41,11 @@ using Scalar = float;
 /**
  * Grid dimension type.
  */
-using Dim = int;
+using Dim = Signed;
 /**
  * Index of a position in a grid's data array.
  */
-using PosIdx = std::size_t;
-/**
- * Grid node position vector element.
- */
-using NodeIdx = int;
+using PosIdx = Unsigned;
 /**
  * Shorthand for D-dimensional vector with elements of T type.
  */
@@ -59,13 +60,12 @@ using VecDf = VecDT<Scalar, D>;
  * Shorthand for D-dimensional NodeIdx vector.
  */
 template <Dim D>
-using VecDi = VecDT<NodeIdx, D>;
+using VecDi = VecDT<Signed, D>;
 /**
  * Shorthand for D-dimensional unsigned integer vector.
  */
 template <Dim D>
-using VecDu = VecDT<unsigned, D>;
-
+using VecDu = VecDT<Unsigned, D>;
 /**
  * Shorthand for 2D float vector.
  */

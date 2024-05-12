@@ -1405,6 +1405,7 @@ SCENARIO("SyCL with ConvGrid")
 				CHECK(pgrid->context().logger().text(2UZ).empty());
 				CHECK(
 					pgrid->context().logger().text(3UZ) ==
+					// Note: the "i.e. (0, 0, 0)" is due to modulo arithmetic
 					"AssertionError: get:  assert_pos_idx_bounds(4) i.e. (0, 0, 0) is greater than "
 					"extent 4\n");
 			}

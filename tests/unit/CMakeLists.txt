@@ -4,6 +4,7 @@
 add_executable(
 	convfelt.test.unit
 	third_party.cpp
+	test_felt2.cpp
 )
 add_test(convfelt.test.unit convfelt.test.unit)
 
@@ -13,11 +14,7 @@ target_link_libraries(
 	project_options
 	project_warnings
 	convfelt
-)
-
-target_link_libraries(
-	convfelt.test.unit
-	PRIVATE
+	# 3rd party
 	Catch2::Catch2WithMain
 	trompeloeil::trompeloeil
 	OpenImageIO::OpenImageIO
