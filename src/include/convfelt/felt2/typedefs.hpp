@@ -5,6 +5,7 @@
 /// Format Eigen vectors as row vectors, i.e. "(1,3,2)".
 // #define EIGEN_DEFAULT_IO_FORMAT Eigen::IOFormat(3, DontAlignCols, " ", ",", "", "", "(", ")")
 
+#include <bit>
 #include <limits>
 
 #include <Eigen/Core>
@@ -38,6 +39,10 @@ using Unsigned = std::size_t;
  * Scalar.
  */
 using Scalar = float;
+/**
+ * Position along an axis
+ */
+using AxisPos = Signed;
 /**
  * Grid dimension type.
  */
@@ -90,4 +95,58 @@ using Vec3u = VecDu<3>;
  * Shorthand for 3D integer vector.
  */
 using Vec3i = VecDi<3>;
+
+/**
+ * Strong type for power-of-two vector.
+ *
+ * @tparam T Element type.
+ * @tparam D Dimensions.
+ */
+template <Dim D>
+class PowTwoDu
+{
+public:
+	using Vec = VecDu<D>;
+
+	constexpr static PowTwoDu<D> from_minimum_size(Vec const & desired_size_)
+	{
+		Vec const exponents = desired_size_.unaryExpr(
+			[](auto const value_)
+			{
+				return static_cast<typename Vec::value_type>(std::bit_width(value_)) -
+					std::has_single_bit(value_);
+			});
+		return PowTwoDu<D>{exponents};
+	}
+
+	constexpr static PowTwoDu<D> from_exponents(Vec const & exponents_)
+	{
+		return PowTwoDu<D>{exponents_};
+	}
+
+	friend bool operator==(PowTwoDu<D> const & lhs_, PowTwoDu<D> const & rhs_)
+	{
+		return lhs_.m_exponents == rhs_.m_exponents;
+	}
+
+	constexpr auto vec() const
+	{
+		return m_exponents.unaryExpr([](auto const exponent_) { return 1UL << exponent_; });
+	}
+
+	constexpr Vec const & exps() const
+	{
+		return m_exponents;
+	}
+
+	constexpr auto mask() const
+	{
+		return m_exponents.unaryExpr([](auto const exponent_) { return (1UL << exponent_) - 1; });
+	}
+
+private:
+	explicit PowTwoDu(Vec const & exponents_) : m_exponents{exponents_} {}
+	Vec m_exponents;
+};
+
 }  // namespace felt2

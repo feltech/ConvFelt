@@ -75,6 +75,24 @@ VecDi<D> index(PosIdx idx_, VecDi<D> const & size_, VecDi<D> const & offset_ = V
 	return pos;
 }
 
+template <Dim D>
+VecDi<D> index(PosIdx idx_, PowTwoDu<D> const & size_, VecDi<D> const & offset_ = VecDi<D>::Zero())
+{
+	VecDi<D> pos;
+	auto const& mask = size_.mask();
+	auto const& exps = size_.exps();
+
+	// Note: since `Dim` is unsigned, we cannot allow `axis` to decrement below zero.
+	for (Dim axis = D - 1; axis != 0; --axis)
+	{
+		pos(axis) = static_cast<felt2::AxisPos>(idx_ & mask(axis)) + offset_(axis);
+		idx_ >>= exps(axis);  // i.e. /= size(axis)
+	}
+	pos(0) = static_cast<felt2::AxisPos>(idx_ & mask(0)) + offset_(0);
+
+	return pos;
+}
+
 /**
  * Test if a position is inside given bounds.
  *

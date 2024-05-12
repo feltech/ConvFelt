@@ -17,6 +17,8 @@
 #     TODO(DF): re-enable - too many positives to deal with right now.
 # - -fuchsia-trailing-return
 #     This check is too strict - doesn't exempt decltype when it's in an expression.
+# - -fuchsia-overloaded-operator
+#     Affects equality, which is required for Regular classes.
 Checks: >
   *,
   -llvmlibc-*,
@@ -28,7 +30,8 @@ Checks: >
   -llvm-header-guard,
   -*-default-arguments-declarations,
   -bugprone-easily-swappable-parameters,
-  -fuchsia-trailing-return
+  -fuchsia-trailing-return,
+  -fuchsia-overloaded-operator
 WarningsAsErrors: '*'
 HeaderFilterRegex: '.*'
 FormatStyle: file
