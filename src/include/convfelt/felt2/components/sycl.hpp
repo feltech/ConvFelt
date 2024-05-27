@@ -4,13 +4,12 @@
 
 #include <algorithm>
 #include <cstddef>
-#include <cstdint>
 #include <memory>
 #include <span>
 #include <string_view>
 #include <vector>
 
-#include <etl/private/to_string_helper.h>
+#include <etl/basic_format_spec.h>
 #include <etl/string.h>
 #include <experimental/mdspan>
 #include <sycl/sycl.hpp>
@@ -225,18 +224,18 @@ struct Log
 		etl::string_ext & str = *strs[stream_idx % strs.size()];
 
 		(
-			[&]
+			[&](auto const & arg_)
 			{
-				if constexpr (requires { std::string_view{args_}; })
+				if constexpr (requires { std::string_view{arg_}; })
 				{
-					std::string_view const arg_str{args_};
+					std::string_view const arg_str{arg_};
 					str.append(arg_str.data(), arg_str.size());
 				}
 				else
 				{
-					etl::to_string(args_, str, true);
+					etl::to_string(arg_, str, true);
 				}
-			}(),
+			}(args_),
 			...);
 
 		return !str.full();
@@ -260,6 +259,11 @@ struct Log
 	void set_stream(std::size_t const * id_) const
 	{
 		stream_id = id_;
+	}
+
+	std::size_t num_streams() const
+	{
+		return strs.size();
 	}
 
 	[[nodiscard]] static Storage make_storage(
@@ -300,8 +304,8 @@ struct Aborter
 		// TODO(DF): Need a less vendor-specific solution. AdaptiveCpp generic JIT backend is
 		//  __SYCL_SINGLE_SOURCE__ yet provides (as below) vendor-soecific macros to target code to
 		//  host vs. device.
-		__hipsycl_if_target_device(asm("trap;"));
-		__hipsycl_if_target_host(std::abort());
+		__hipsycl_if_target_device(asm("trap;");)
+		__hipsycl_if_target_host(std::abort();)
 #endif
 	}
 };

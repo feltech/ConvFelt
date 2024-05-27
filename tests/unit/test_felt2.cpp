@@ -10,7 +10,7 @@
 
 SCENARIO("Pow2 coord conversions")
 {
-	GIVEN("a Pow2 size")
+	GIVEN("a pow2 size")
 	{
 		auto pow2_and_size = GENERATE(
 			std::tuple{felt2::PowTwoDu<3>::from_exponents({0, 0, 0}), felt2::Vec3i{1, 1, 1}},
@@ -25,7 +25,7 @@ SCENARIO("Pow2 coord conversions")
 
 		WHEN("Pow2 size is converted to linear vector")
 		{
-			felt2::Vec3u const vec = pow2_size.vec();
+			felt2::Vec3u const vec = pow2_size.as_size();
 
 			THEN("original size is recovered")
 			{
@@ -56,25 +56,35 @@ SCENARIO("Pow2 coord conversions")
 						Catch::Generators::from_range(positions));
 				});
 
-			WHEN("the position is transformed to index and back again")
+			WHEN("the position is transformed to an index")
 			{
 				CAPTURE(size, offset, pos, pow2_size.mask(), pow2_size.exps());
 
 				auto idx = felt2::index(pos, size, offset);
-				CAPTURE(idx);
-				auto expected_pos = felt2::index(idx, size, offset);
-				auto actual_pos = felt2::index(idx, pow2_size, offset);
+				auto pow2_idx = felt2::index(pos, pow2_size, offset);
 
-				THEN("original position is recovered")
+				THEN("index calculated from linear size is same as index calculated from pow2 size")
 				{
-					CHECK(actual_pos == expected_pos);
-					CHECK(expected_pos == pos);
+					CHECK(idx == pow2_idx);
+				}
+
+				AND_WHEN("the index is transformed back into a position")
+				{
+					CAPTURE(idx, pow2_idx);
+					auto expected_pos = felt2::index(idx, size, offset);
+					auto actual_pos = felt2::index(idx, pow2_size, offset);
+
+					THEN("original position is recovered")
+					{
+						CHECK(actual_pos == expected_pos);
+						CHECK(expected_pos == pos);
+					}
 				}
 			}
 		}
 	}
 
-	GIVEN("a target size")
+	GIVEN("a target size and expected pow2 size")
 	{
 		auto target_size_and_expected_pow2_size = GENERATE(
 			std::tuple{felt2::Vec3u{0, 0, 0}, felt2::PowTwoDu<3>::from_exponents({0, 0, 0})},

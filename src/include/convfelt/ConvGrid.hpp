@@ -146,6 +146,7 @@ public:
 	};
 
 	using VecDi = felt2::VecDi<Traits::k_dims>;
+	using PowTwoDu = felt2::PowTwoDu<Traits::k_dims>;
 	using Leaf = typename Traits::Leaf;
 
 	using ContextImpl = HostOrDeviceContextT<flags>;
@@ -173,7 +174,7 @@ private:
 public:
 	ByValue(
 		decltype(m_context_impl) context_,
-		VecDi const & size_,
+		PowTwoDu const & size_,
 		VecDi const & offset_,
 		Leaf background_) requires(k_is_device_shared)
 		: m_context_impl{std::move(context_)},
@@ -186,7 +187,7 @@ public:
 
 	ByValue(
 		decltype(m_context_impl) context_,
-		VecDi const & size_,
+		PowTwoDu const & size_,
 		VecDi const & offset_,
 		Leaf background_) requires(!k_is_device_shared)
 		: m_context_impl{std::move(context_)},
@@ -284,6 +285,7 @@ public:
 	};
 
 	using VecDi = felt2::VecDi<Traits::k_dims>;
+	using PowTwoDu = felt2::PowTwoDu<Traits::k_dims>;
 	using Leaf = typename Traits::Leaf;
 
 	using SizeImpl = felt2::components::Size<Traits>;
@@ -309,7 +311,7 @@ private:
 public:
 	ByRef(
 		decltype(m_context_impl) context_,
-		VecDi const & size_,
+		PowTwoDu const & size_,
 		VecDi const & offset_,
 		Leaf background_) requires(k_is_device_shared)
 		: m_context_impl{std::move(context_)},
@@ -322,7 +324,7 @@ public:
 
 	ByRef(
 		decltype(m_context_impl) context_,
-		VecDi const & size_,
+		PowTwoDu const & size_,
 		VecDi const & offset_,
 		Leaf background_) requires(!k_is_device_shared)
 		: m_context_impl{std::move(context_)},
@@ -405,6 +407,7 @@ public:
 	};
 
 	using VecDi = felt2::VecDi<Traits::k_dims>;
+	using PowTwoDu = felt2::PowTwoDu<Traits::k_dims>;
 	using Leaf = typename Traits::Leaf;
 
 	using SizeImpl = felt2::components::Size<Traits>;
@@ -531,6 +534,8 @@ public:
 	};
 
 	using VecDi = felt2::VecDi<Traits::k_dims>;
+	using PowTwoDu = felt2::PowTwoDu<Traits::k_dims>;
+	using PowTwoWindowSize = felt2::PowTwoDu<Traits::k_dims - 1>;
 	using Leaf = typename Traits::Leaf;
 	using Child = FilterTD<Leaf, Traits::k_dims, flags | GridFlag::is_child>;
 	using ChildrenGrid = ByRef<Child, Traits::k_dims, flags | GridFlag::is_child>;
@@ -559,24 +564,25 @@ private:
 public:
 	ConvGridTD(
 		decltype(m_context_impl) context_,
-		VecDi const & size_,
-		felt2::VecDi<D - 1> const & child_window_)
+		PowTwoDu const & size_,
+		PowTwoWindowSize const & child_window_)
 		: ConvGridTD{std::move(context_), size_, window_to_size(child_window_, size_), {0, 0, 0}}
 	{
 	}
 
-	ConvGridTD(decltype(m_context_impl) context_, VecDi const & size_, VecDi const & child_size_)
+	ConvGridTD(
+		decltype(m_context_impl) context_, PowTwoDu const & size_, PowTwoDu const & child_size_)
 		: ConvGridTD{context_, size_, child_size_, {0, 0, 0}}
 	{
 		assert(
-			size_(D - 1) == child_size_(D - 1) &&
+			size_.exps()(D - 1) == child_size_.exps()(D - 1) &&
 			"Channel dimension must be equal for both image and filters");
 	}
 
 	ConvGridTD(
 		decltype(m_context_impl) context_,
-		VecDi const & size_,
-		felt2::VecDi<D - 1> const & child_window_) requires(k_is_device_shared)
+		PowTwoDu const & size_,
+		PowTwoWindowSize const & child_window_) requires(k_is_device_shared)
 		: m_context_impl{std::move(context_)},
 		  m_storage_impl{{context().context(), context().device()}},
 		  m_size_impl{size_, {0, 0, 0}},
@@ -584,15 +590,15 @@ public:
 		  m_children{m_children_size_impl.template make_children_span<decltype(m_children)>(
 			  m_context_impl,
 			  m_storage_impl,
-			  Child{m_context_impl, {VecDi::Zero(), VecDi::Zero()}})}
+			  Child{m_context_impl, {PowTwoDu::from_minimum_size(VecDi::Zero()), VecDi::Zero()}})}
 	{
 		assert_child_size();
 	}
 
 	ConvGridTD(
 		decltype(m_context_impl) context_,
-		VecDi const & size_,
-		VecDi const & child_size_,
+		PowTwoDu const & size_,
+		PowTwoDu const & child_size_,
 		VecDi const & offset_) requires(!k_is_device_shared)
 		: m_context_impl{std::move(context_)},
 		  m_size_impl{size_, offset_},
@@ -600,7 +606,7 @@ public:
 		  m_children{m_children_size_impl.template make_children_span<decltype(m_children)>(
 			  m_context_impl,
 			  m_storage_impl,
-			  Child{m_context_impl, {VecDi::Zero(), VecDi::Zero()}})}
+			  Child{m_context_impl, {PowTwoDu::from_minimum_size(VecDi::Zero()), VecDi::Zero()}})}
 	{
 		assert_child_size();
 	}
@@ -667,16 +673,18 @@ private:
 	void assert_child_size()
 	{
 		assert(
-			m_children_size_impl.child_size()(m_children_size_impl.child_size().size() - 1) ==
-				m_size_impl.size()(m_size_impl.size().size() - 1) &&
+			m_children_size_impl.child_size().exps()(
+				m_children_size_impl.child_size().exps().size() - 1) ==
+				m_size_impl.size().exps()(m_size_impl.size().exps().size() - 1) &&
 			"Depth of children must be same as depth of parent");
 	}
 
-	VecDi window_to_size(felt2::VecDi<D - 1> const & window_, VecDi const & size_)
+
+	PowTwoDu window_to_size(PowTwoWindowSize const & window_, PowTwoDu const & size_)
 	{
-		VecDi child_size;
-		child_size << window_, size_(size_.size() - 1);
-		return child_size;
+		felt2::VecDu<D> child_size_exps;
+		child_size_exps << window_.exps(), size_.exps()(size_.exps().size() - 1);
+		return PowTwoDu::from_exponents(child_size_exps);
 	}
 };
 
@@ -696,6 +704,8 @@ public:
 	};
 
 	using VecDi = felt2::VecDi<Traits::k_dims>;
+	using PowTwoDu = felt2::PowTwoDu<Traits::k_dims>;
+	using PowTwoWindowSize = felt2::PowTwoDu<Traits::k_dims - 1>;
 	using Leaf = typename Traits::Leaf;
 
 	using ContextImpl = HostOrDeviceContextT<flags>;
@@ -714,45 +724,45 @@ private:
 public:
 	TemplateParentGridTD(
 		decltype(m_context_impl) context_,
-		VecDi const & size_,
-		felt2::VecDi<D - 1> const & child_window_)
+		PowTwoDu const & size_,
+		felt2::PowTwoDu<D - 1> const & child_window_)
 		: TemplateParentGridTD{
 			  std::move(context_), size_, window_to_size(child_window_, size_), {0, 0, 0}}
 	{
 	}
 
 	TemplateParentGridTD(
-		decltype(m_context_impl) context_, VecDi const & size_, VecDi const & child_size_)
+		decltype(m_context_impl) context_, PowTwoDu const & size_, PowTwoDu const & child_size_)
 		: TemplateParentGridTD{std::move(context_), size_, child_size_, {0, 0, 0}}
 	{
 		assert(
-			size_(D - 1) == child_size_(D - 1) &&
+			size_.exps()(D - 1) == child_size_.exps()(D - 1) &&
 			"Channel dimension must be equal for both image and filters");
 	}
 
 	TemplateParentGridTD(
 		decltype(m_context_impl) context_,
-		VecDi const & size_,
-		felt2::VecDi<D - 1> const & child_window_) requires(k_is_device_shared)
+		PowTwoDu const & size_,
+		felt2::PowTwoDu<D - 1> const & child_window_) requires(k_is_device_shared)
 		: m_context_impl{std::move(context_)},
 		  m_size_impl{size_, {0, 0, 0}},
 		  m_children_size_impl{m_size_impl, window_to_size(child_window_, m_size_impl.size())},
 		  m_children{m_children_size_impl.template make_empty_children<decltype(m_children)>(
-			  context(), Child{context(), {VecDi::Zero(), VecDi::Zero()}})}
+			  context(), Child{context(), {PowTwoDu::from_minimum_size(VecDi::Zero()), VecDi::Zero()}})}
 	{
 		assert_child_size();
 	}
 
 	TemplateParentGridTD(
 		decltype(m_context_impl) context_,
-		VecDi const & size_,
-		VecDi const & child_size_,
+		PowTwoDu const & size_,
+		PowTwoDu const & child_size_,
 		VecDi const & offset_) requires(!k_is_device_shared)
 		: m_context_impl{std::move(context_)},
 		  m_size_impl{size_, offset_},
 		  m_children_size_impl{m_size_impl, child_size_},
 		  m_children{m_children_size_impl.template make_empty_children<decltype(m_children)>(
-			  Child{{VecDi::Zero(), VecDi::Zero()}})}
+			  Child{{PowTwoDu::from_minimum_size(VecDi::Zero()), VecDi::Zero()}})}
 	{
 		assert_child_size();
 	}
@@ -781,16 +791,16 @@ private:
 	void assert_child_size()
 	{
 		assert(
-			m_children_size_impl.child_size()(m_children_size_impl.child_size().size() - 1) ==
-				m_size_impl.size()(m_size_impl.size().size() - 1) &&
+			m_children_size_impl.child_size().exps()(m_children_size_impl.child_size().exps().size() - 1) ==
+				m_size_impl.size().exps()(m_size_impl.size().exps().size() - 1) &&
 			"Depth of children must be same as depth of parent");
 	}
 
-	VecDi window_to_size(felt2::VecDi<D - 1> const & window_, VecDi const & size_)
+	PowTwoDu window_to_size(felt2::PowTwoDu<D - 1> const & window_, PowTwoDu const & size_)
 	{
-		VecDi child_size;
-		child_size << window_, size_(size_.size() - 1);
-		return child_size;
+		felt2::VecDu<D> child_size_exps;
+		child_size_exps << window_.exps(), size_.exps()(size_.exps().size() - 1);
+		return PowTwoDu::from_exponents(child_size_exps);
 	}
 };
 }  // namespace convfelt

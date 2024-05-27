@@ -9,7 +9,10 @@ convfelt::InputImageGrid::HostGrid convfelt::InputImageGrid::make_from_file(
 	[[maybe_unused]] std::filesystem::path const & path_)
 {
 	return convfelt::InputImageGrid::HostGrid{
-		make_host_context(), felt2::Vec3i(0, 0, 0), felt2::Vec3i(0, 0, 0), 0};
+		make_host_context(),
+		felt2::PowTwo3u::from_minimum_size({0, 0, 0}),
+		felt2::Vec3i(0, 0, 0),
+		0};
 }
 
 convfelt::InputImageGrid::HostDeviceGrid convfelt::InputImageGrid::make_from_file(
@@ -18,5 +21,8 @@ convfelt::InputImageGrid::HostDeviceGrid convfelt::InputImageGrid::make_from_fil
 	sycl::device const & device_)
 {
 	return convfelt::InputImageGrid::HostDeviceGrid{
-		make_device_context(device_, context_), felt2::Vec3i(0, 0, 0), felt2::Vec3i(0, 0, 0), 0};
+		make_device_context(device_, context_),
+		felt2::PowTwo3u::from_minimum_size({0, 0, 0}),
+		felt2::Vec3i(0, 0, 0),
+		0};
 }

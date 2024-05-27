@@ -1,6 +1,8 @@
 #pragma once
 #include <concepts>
 #include <cstddef>
+#include <tuple>
+#include <type_traits>
 
 #include "felt2/index.hpp"
 #include "felt2/typedefs.hpp"
@@ -20,15 +22,19 @@ constexpr felt2::Dim k_dim_for = std::decay_t<G>::Traits::k_dims;
 
 template <class G>
 using VecDiFor = felt2::VecDi<k_dim_for<G>>;
+template <class G>
+using PowTwoDuFor = felt2::PowTwoDu<k_dim_for<G>>;
 }  // namespace helpers
 
 namespace detail
 {
-template <typename From, typename To>
+template <typename To, typename From>
 concept non_narrowing_convertible_from =
-	std::convertible_to<From, To> && // (1) conversion is possible
-	requires (To& val) { From{val}; };   // (2) this conversion isn't narrowing
-
+	std::convertible_to<To, From> &&  // (1) conversion is possible
+	requires(From & val_)
+{
+	std::decay_t<To>{val_};
+};	// (2) this conversion isn't narrowing
 
 // clang-format off
 template <typename T>
@@ -36,7 +42,7 @@ concept Grid = requires(T obj_)
 {
 	typename helpers::VecDiFor<T>;
 	{obj_.offset()} -> std::convertible_to<helpers::VecDiFor<T>>;
-	{obj_.size()} -> non_narrowing_convertible_from<helpers::VecDiFor<T>>;
+	{obj_.size()} -> non_narrowing_convertible_from<helpers::PowTwoDuFor<T>>;
 };
 
 template <typename T>
@@ -76,7 +82,7 @@ static constexpr auto pos_idx(concepts::GridWithStorage auto & grid_)
 static inline auto pos(concepts::Grid auto & grid_)
 	-> cppcoro::generator<concepts::helpers::VecDiFor<decltype(grid_)>>
 {
-	for (auto pos_idx : idx(felt2::PosIdx(grid_.size().prod())))
+	for (auto pos_idx : idx(felt2::PosIdx(grid_.size().as_size().prod())))
 		co_yield grid_.offset() + felt2::index(pos_idx, grid_.size());
 };
 
@@ -89,7 +95,7 @@ static inline auto idx_and_pos(concepts::Grid auto & grid_)
 {
 	using VecDi = concepts::helpers::VecDiFor<decltype(grid_)>;
 
-	for (auto const pos_idx : idx(felt2::PosIdx(grid_.size().prod())))
+	for (auto const pos_idx : idx(felt2::PosIdx(grid_.size().as_size().prod())))
 	{
 		VecDi const pos = grid_.offset() + felt2::index(pos_idx, grid_.size());
 		co_yield{pos_idx, pos};

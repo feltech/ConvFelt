@@ -5,9 +5,11 @@
 #include <cmath>
 #include <cstddef>
 #include <cstdint>
+#include <cstdio>
 #include <exception>
 #include <format>
 #include <iterator>
+#include <ranges>
 #include <span>
 #include <string_view>
 #include <utility>
@@ -118,29 +120,58 @@ SCENARIO("Using OpenImageIO with cppcoro and loading into Felt grid")
 
 			AND_WHEN("image is loaded into grid with no zero-padding")
 			{
-				auto image_grid_spec = image.spec();
-				image_grid_spec.format = OIIO::TypeDescFromC<felt2::Scalar>::value();
-
 				convfelt::InputGrid image_grid{
 					convfelt::make_host_context(),
-					{image_grid_spec.height, image_grid_spec.width, image_grid_spec.nchannels},
+					convfelt::InputGrid::PowTwoDu::from_minimum_size(
+						{image.spec().height, image.spec().width, image.spec().nchannels}),
 					{0, 0, 0},
 					0};
+
+				auto image_grid_spec = image.spec();
+				image_grid_spec.format = OIIO::TypeDescFromC<felt2::Scalar>::value();
+				image_grid_spec.width = image_grid.size().as_pos().y();
+				image_grid_spec.height = image_grid.size().as_pos().x();
+				image_grid_spec.nchannels = image_grid.size().as_pos().z();
 
 				OIIO::ImageBuf image_grid_buf{image_grid_spec, image_grid.storage().data()};
 				OIIO::ImageBufAlgo::paste(image_grid_buf, 0, 0, 0, 0, image);
 
+				// std::string tmp_img_file_path = std::tmpnam(nullptr);  // NOLINT(*-mt-unsafe)
+				// tmp_img_file_path += ".png";
+				// image_grid_buf.write(tmp_img_file_path, OIIO::TypeColor);
+				// CAPTURE(tmp_img_file_path);
+
 				THEN("grid contains image")
 				{
-					for (auto x : convfelt::iter::idx(image_grid.size().x()))
-						for (auto y : convfelt::iter::idx(image_grid.size().y()))
+					for (auto x : convfelt::iter::idx(image_grid.size().as_pos().x()))
+						for (auto y : convfelt::iter::idx(image_grid.size().as_pos().y()))
 						{
-							Pixel pixel(image.spec().nchannels);
-							image.getpixel(y, x, pixel.data(), static_cast<int>(pixel.size()));
-							for (auto z : convfelt::iter::idx(image_grid.size().z()))
+							// Grid can be larger than image since pow2 size.
+							if (x >= image_grid_spec.height || y >= image_grid_spec.width)
 							{
-								CAPTURE(x, y, z);
-								CHECK(image_grid.get({x, y, z}) == pixel(z));
+								for (auto z : convfelt::iter::idx(image_grid.size().as_pos().z()))
+								{
+									CAPTURE(x, y, z);
+									CHECK(image_grid.get({x, y, z}) == 0);
+								}
+							}
+							else
+							{
+								Pixel pixel(image.spec().nchannels);
+								image.getpixel(y, x, pixel.data(), static_cast<int>(pixel.size()));
+								for (auto z : convfelt::iter::idx(image_grid.size().as_pos().z()))
+								{
+									CAPTURE(x, y, z);
+									// Grid can have more channels than source because pow2 size.
+									if (z >= image.spec().nchannels)
+									{
+										CHECK(image_grid.get({x, y, z}) == 0);
+									}
+									else
+									{
+										CHECK(image_grid.get({x, y, z}) == pixel(z));
+									}
+								}
 							}
 						}
 				}
@@ -148,30 +179,32 @@ SCENARIO("Using OpenImageIO with cppcoro and loading into Felt grid")
 
 			AND_WHEN("image is loaded into grid with 1 pixel of zero-padding")
 			{
-				auto image_grid_spec = image.spec();
-				image_grid_spec.width += 2;
-				image_grid_spec.height += 2;
-				image_grid_spec.format = OIIO::TypeDescFromC<felt2::Scalar>::value();
-
 				convfelt::InputGrid image_grid{
 					convfelt::make_host_context(),
-					{image.spec().height + 2, image.spec().width + 2, image_grid_spec.nchannels},
+					convfelt::InputGrid::PowTwoDu::from_minimum_size(
+						{image.spec().height + 2, image.spec().width + 2, image.spec().nchannels}),
 					{0, 0, 0},
 					0};
+
+				auto image_grid_spec = image.spec();
+				image_grid_spec.width = image_grid.size().as_pos().y();
+				image_grid_spec.height = image_grid.size().as_pos().x();
+				image_grid_spec.nchannels = image_grid.size().as_pos().z();
+				image_grid_spec.format = OIIO::TypeDescFromC<felt2::Scalar>::value();
 
 				OIIO::ImageBuf image_grid_buf{image_grid_spec, image_grid.storage().data()};
 				OIIO::ImageBufAlgo::paste(image_grid_buf, 1, 1, 0, 0, image);
 
 				THEN("grid contains padded image")
 				{
-					for (auto x : convfelt::iter::idx(image_grid.size().x()))
-						for (auto y : convfelt::iter::idx(image_grid.size().y()))
+					for (auto x : convfelt::iter::idx(image_grid.size().as_pos().x()))
+						for (auto y : convfelt::iter::idx(image_grid.size().as_pos().y()))
 						{
 							if (x == 0 || y == 0 ||
 								//
-								x == image_grid.size().x() - 1 || y == image_grid.size().y() - 1)
+								x >= image.spec().height + 1 || y >= image.spec().height + 1)
 							{
-								for (auto z : convfelt::iter::idx(image_grid.size().z()))
+								for (auto z : convfelt::iter::idx(image_grid.size().as_pos().z()))
 								{
 									CAPTURE(x, y, z);
 									CHECK(image_grid.get({x, y, z}) == 0);
@@ -182,10 +215,18 @@ SCENARIO("Using OpenImageIO with cppcoro and loading into Felt grid")
 								Pixel pixel(image.spec().nchannels);
 								image.getpixel(
 									y - 1, x - 1, pixel.data(), static_cast<int>(pixel.size()));
-								for (auto z : convfelt::iter::idx(image_grid.size().z()))
+								for (auto z : convfelt::iter::idx(image_grid.size().as_pos().z()))
 								{
 									CAPTURE(x, y, z);
-									CHECK(image_grid.get({x, y, z}) == pixel(z));
+									// Grid can have more channels than source because pow2 size.
+									if (z >= image.spec().nchannels)
+									{
+										CHECK(image_grid.get({x, y, z}) == 0);
+									}
+									else
+									{
+										CHECK(image_grid.get({x, y, z}) == pixel(z));
+									}
 								}
 							}
 						}
@@ -214,8 +255,9 @@ template <felt2::Dim D = 3>
 struct FilterSizeHelper
 {
 	using VecDi = felt2::VecDi<D>;
+	using PowTwoDu = felt2::PowTwoDu<D>;
 
-	VecDi filter_size;
+	PowTwoDu filter_size;
 	VecDi filter_stride{[]() constexpr
 						{
 							// False positive:
@@ -228,32 +270,36 @@ struct FilterSizeHelper
 
 	[[nodiscard]] constexpr auto num_filter_elems() const noexcept
 	{
-		return filter_size.prod();
+		return filter_size.as_pos().prod();
 	}
 
-	[[nodiscard]] felt2::VecDi<D - 1> filter_window() const
+	[[nodiscard]] felt2::PowTwoDu<D - 1> filter_window() const
 	{
-		return filter_size.template head<D - 1>();
+		return felt2::PowTwoDu<D - 1>::from_exponents(filter_size.exps().template head<D - 1>());
 	}
 
-	[[nodiscard]] VecDi input_size_from_source_size(VecDi const & source_size_) const
+	[[nodiscard]] PowTwoDu input_size_from_source_size(PowTwoDu const & source_size_) const
 	{
-		return input_size_from_source_and_filter_size(filter_size, filter_stride, source_size_);
+		return PowTwoDu::from_minimum_size(input_size_from_source_and_filter_size(
+			filter_size.as_pos(), filter_stride, source_size_.as_pos()));
 	}
 
-	[[nodiscard]] VecDi input_start_pos_from_filter_pos(VecDi const & filter_pos_) const
+	[[nodiscard]] VecDi source_start_pos_from_filter_pos(VecDi const & filter_pos_) const
 	{
 		return (filter_pos_.array() * filter_stride.array()).matrix();
 	}
 
 	[[nodiscard]] VecDi source_pos_from_input_pos(VecDi const & input_pos_) const
 	{
-		return source_pos_from_input_pos_and_filter_size(filter_size, filter_stride, input_pos_);
+		return source_pos_from_input_pos_and_filter_size(
+			filter_size.as_pos(), filter_stride, input_pos_);
 	}
 
-	[[nodiscard]] VecDi output_size_from_num_filter_regions(VecDi const & num_filter_regions_) const
+	[[nodiscard]] PowTwoDu output_size_from_num_filter_regions(
+		VecDi const & num_filter_regions_) const
 	{
-		return (num_filter_regions_.array() * filter_size.array()).matrix();
+		return PowTwoDu::from_minimum_size(
+			(num_filter_regions_.array() * filter_size.as_pos().array()).matrix());
 	}
 
 	void input_pos_from_source_pos(
@@ -262,7 +308,7 @@ struct FilterSizeHelper
 		IsCallableWithPos auto && callback_) const
 	{
 		input_pos_from_source_pos_and_filter_size(
-			filter_size,
+			filter_size.as_pos(),
 			filter_stride,
 			source_size_,
 			source_pos_,
@@ -273,9 +319,9 @@ struct FilterSizeHelper
 	 * Assuming we wish to construct a grid storing all filter inputs side-by-side, given a source
 	 * image size calculate how many distinct regions will need to be stacked side-by-side.
 	 *
-	 * @param filter_size Size of filter to walk across source image.
-	 * @param filter_stride Size of each step as the filter walks across the source image.
-	 * @param source_size Size of source image.
+	 * @param filter_size_ Size of filter to walk across source image.
+	 * @param filter_stride_ Size of each step as the filter walks across the source image.
+	 * @param source_size_ Size of source image.
 	 * @return Number of regions (along each dimension) stamped out by the filter after it has
 	 * walked the source image.
 	 */
@@ -295,9 +341,9 @@ struct FilterSizeHelper
 	 * Assuming we wish to construct a grid storing all filter inputs side-by-side, given a source
 	 * image size calculate how large the grid of filter inputs must be.
 	 *
-	 * @param filter_size Size of filter to walk across source image.
-	 * @param filter_stride Size of each step as the filter walks across the source image.
-	 * @param source_size Size of source image.
+	 * @param filter_size_ Size of filter to walk across source image.
+	 * @param filter_stride_ Size of each step as the filter walks across the source image.
+	 * @param source_size_ Size of source image.
 	 * @return Required size to store all filter inputs side-by-side.
 	 */
 	static VecDi input_size_from_source_and_filter_size(
@@ -313,9 +359,9 @@ struct FilterSizeHelper
 	 * Assuming a grid of all filter inputs side-by-side, given a position in this grid, get the
 	 * corresponding position in the source image that the filter input element was copied from.
 	 *
-	 * @param filter_size Size of filter to walk across source image.
-	 * @param filter_stride Size of each step as the filter walks across the source image.
-	 * @param input_pos Position in grid of all filter inputs side-by-side.
+	 * @param filter_size_ Size of filter to walk across source image.
+	 * @param filter_stride_ Size of each step as the filter walks across the source image.
+	 * @param input_pos_ Position in grid of all filter inputs side-by-side.
 	 * @return
 	 */
 	static VecDi source_pos_from_input_pos_and_filter_size(
@@ -336,12 +382,12 @@ struct FilterSizeHelper
 	 *
 	 * That is, map a source image pixel to the (multiple) filter input image pixel(s).
 	 *
-	 * @param filter_size Size of filter to walk across source image.
-	 * @param filter_stride Size of each step as the filter walks across the source image.
-	 * @param source_size Size of source image.
-	 * @param source_pos Position within source image.
-	 * @param callback Callback to call, passing the positions in the filter input image that
-	 * correspond to the @p source_pos position in the source image..
+	 * @param filter_size_ Size of filter to walk across source image.
+	 * @param filter_stride_ Size of each step as the filter walks across the source image.
+	 * @param source_size_ Size of source image.
+	 * @param source_pos_ Position within source image.
+	 * @param callback_ Callback to call, passing the positions in the filter input image that
+	 * correspond to the @p source_pos_ position in the source image.
 	 */
 	static void input_pos_from_source_pos_and_filter_size(
 		VecDi const & filter_size_,
@@ -402,13 +448,9 @@ struct FilterSizeHelper
 };
 
 template <felt2::Dim D, class... Others>
-FilterSizeHelper(felt2::VecDi<D>, Others...) -> FilterSizeHelper<D>;
+FilterSizeHelper(felt2::PowTwoDu<D>, Others...) -> FilterSizeHelper<D>;
 
-// template <class... Others>
-// FilterSizeHelper(std::initializer_list<felt2::PosIdx> size, Others...) ->
-// FilterSizeHelper<size.size()>;
-
-SCENARIO("Transforming source image points to filter input grid points and vice versa")
+SCENARIO("Transforming source image to/from filter input grid points")
 {
 	GIVEN("stride size 3x3, filter size 3x3 and image size 3x3 with 4 channels")
 	{
@@ -795,44 +837,67 @@ SCENARIO("Input/output ConvGrids")
 		CAPTURE(image.geterror(false));
 		REQUIRE(!image.has_error());
 		image.read();
-		auto image_grid_spec = image.spec();
-		image_grid_spec.width += 2;
-		image_grid_spec.height += 2;
-		image_grid_spec.format = OIIO::TypeDescFromC<felt2::Scalar>::value();
 
 		convfelt::InputGrid image_grid{
 			convfelt::make_host_context(),
-			{image.spec().height + 2, image.spec().width + 2, image_grid_spec.nchannels},
+			convfelt::InputGrid::PowTwoDu::from_minimum_size(
+				{image.spec().height + 2, image.spec().width + 2, image.spec().nchannels}),
 			{0, 0, 0},
 			0};
+
+		auto image_grid_spec = image.spec();
+		image_grid_spec.width = image_grid.size().as_pos()(1);
+		image_grid_spec.height = image_grid.size().as_pos()(0);
+		image_grid_spec.nchannels = image_grid.size().as_pos()(2);
+		image_grid_spec.format = OIIO::TypeDescFromC<felt2::Scalar>::value();
 
 		OIIO::ImageBuf image_grid_buf{image_grid_spec, image_grid.storage().data()};
 		OIIO::ImageBufAlgo::paste(image_grid_buf, 1, 1, 0, 0, image);
 
 		WHEN("image is split into filter regions")
 		{
-			FilterSizeHelper const filter_input_sizer{felt2::Vec3i{4, 4, 3}, felt2::Vec3i{2, 2, 0}};
+			// Helper to convert sizes and positions between source image, filter input grid, and
+			// output image.
+			FilterSizeHelper const filter_input_sizer{
+				felt2::PowTwo3u::from_exponents({2, 2, 2}), felt2::Vec3i{2, 2, 0}};
 
+			// Grid of filter inputs expanded from source image, with child grids of input values
+			// for each filter side-by-side. Typically the input grid will be much larger than the
+			// source image grid, since many pixels are duplicated, depending on the stride of the
+			// filter as it moves across the source image.
 			convfelt::ConvGrid filter_input_grid{
 				convfelt::make_host_context(),
 				filter_input_sizer.input_size_from_source_size(image_grid.size()),
 				filter_input_sizer.filter_size};
 
+			// Each child grid of the input grid represents the input to a filter.
 			CHECK(filter_input_grid.child_size() == filter_input_sizer.filter_size);
 
+			// Loop each individual filter input child.
 			for (auto const & [filter_pos_idx, filter] :
 				 convfelt::iter::idx_and_val(filter_input_grid.children()))
 			{
-				felt2::Vec3i const input_pos_start =
-					filter_input_sizer.input_start_pos_from_filter_pos(
+				// Calculate position in original source image that corresponds to the local (0,0)
+				// point in the filter.
+				felt2::Vec3i const source_pos_start =
+					filter_input_sizer.source_start_pos_from_filter_pos(
 						filter_input_grid.children().index(filter_pos_idx));
 
+				// Loop each position within the filter.
 				for (felt2::PosIdx const local_pos_idx : convfelt::iter::pos_idx(filter))
 				{
-					felt2::Vec3i const input_pos =
-						input_pos_start + felt2::index(local_pos_idx, filter.size());
+					// Calculate the position in the original source image that the current filter
+					// pixel corresponds to.
+					felt2::Vec3i const source_pos =
+						source_pos_start + felt2::index(local_pos_idx, filter.size());
 
-					filter.set(local_pos_idx, image_grid.get(input_pos));
+					// source_pos may be out of bounds wrt image_grid because the filter_input_grid
+					// can have additional padding due to pow2 sizing.
+					if (!image_grid.inside(source_pos))
+						continue;
+
+					// Set the filter input value from the corresponding value in the source image.
+					filter.set(local_pos_idx, image_grid.get(source_pos));
 				}
 			}
 
@@ -849,6 +914,8 @@ SCENARIO("Input/output ConvGrids")
 					}
 				}
 				{
+					// Check that each filter input pixel corresponds to the expected source image
+					// pixel.
 					std::size_t num_nonzero = 0;
 					for (auto const & filter_input :
 						 convfelt::iter::val(filter_input_grid.children()))
@@ -863,13 +930,38 @@ SCENARIO("Input/output ConvGrids")
 
 							CAPTURE(pos);
 							CAPTURE(source_pos);
-							CHECK(filter_input.get(pos_idx) == image_grid.get(source_pos));
 
-							if (filter_input.get(pos) != 0)
+							// source_pos might be outside domain of image_grid since pow2 sizing
+							// means filter_input_grid is likely larger than necessary.
+							if (!image_grid.inside(source_pos))
+								CHECK(filter_input.get(pos_idx) == 0);
+							else
+								CHECK(filter_input.get(pos_idx) == image_grid.get(source_pos));
+
+							if (filter_input.get(pos_idx) != 0)
 								++num_nonzero;
 						}
 					}
+
 					CHECK(num_nonzero > 0);
+
+					// Check that each source image pixel maps to the appropriate filter input
+					// pixel.
+					for (auto const & [pos_idx, pos] : convfelt::iter::idx_and_pos(image_grid))
+					{
+						filter_input_sizer.input_pos_from_source_pos(
+							image_grid.size().as_pos(),
+							pos,
+							[&](auto const filter_pos, auto const input_pos)
+							{
+								felt2::Vec3i const source_pos =
+									filter_input_sizer.source_pos_from_input_pos(input_pos);
+
+								CHECK(
+									filter_input_grid.children().get(filter_pos).get(input_pos) ==
+									image_grid.get(source_pos));
+							});
+					}
 				}
 			}
 		}
@@ -1058,17 +1150,17 @@ template <class String, class... Args>
 void append(String & str_, Args... args_)
 {
 	(
-		[&]
+		[&](auto const & arg)
 		{
-			if constexpr (requires { std::string_view{args_}; })
+			if constexpr (requires { std::string_view{arg}; })
 			{
-				str_ += args_;
+				str_ += arg;
 			}
 			else
 			{
-				etl::to_string(args_, str_, true);
+				etl::to_string(arg, str_, true);
 			}
-		}(),
+		}(args_),
 		...);
 }
 
@@ -1082,17 +1174,17 @@ struct ThreadAppender
 		etl::to_string(*tid, str_, true);
 		str_ += ": ";
 		(
-			[&]
+			[&](auto const & arg_)
 			{
-				if constexpr (requires { std::string_view{args_}; })
+				if constexpr (requires { std::string_view{arg_}; })
 				{
-					str_ += args_;
+					str_ += arg_;
 				}
 				else
 				{
-					etl::to_string(args_, str_, true);
+					etl::to_string(arg_, str_, true);
 				}
-			}(),
+			}(args_),
 			...);
 	}
 };
@@ -1121,7 +1213,7 @@ SCENARIO("Assertion and logging in SYCL")
 				{
 					cgh_.parallel_for<class vector_add>(
 						work_items,
-						[text_nd](sycl::id<1> tid_)
+						[text_nd](sycl::id<1> const tid_)
 						{
 							etl::string_ext text{
 								&text_nd[static_cast<int>(tid_), 0], k_max_msg_size};
@@ -1321,8 +1413,8 @@ SCENARIO("SyCL with ConvGrid")
 			dev,
 			ctx,
 			convfelt::make_device_context(dev, ctx),
-			felt2::Vec3i{4, 4, 3},
-			felt2::Vec2i{2, 2});
+			ConvGrid::PowTwoDu::from_exponents({2, 2, 2}),
+			ConvGrid::PowTwoWindowSize::from_exponents({1, 1}));
 
 		std::fill(pgrid->storage().begin(), pgrid->storage().end(), 3);
 		REQUIRE(!pgrid->children().storage().empty());
@@ -1400,11 +1492,11 @@ SCENARIO("SyCL with ConvGrid")
 
 			THEN("out of bounds access is logged")
 			{
-				CHECK(pgrid->context().logger().text(0UZ).empty());
-				CHECK(pgrid->context().logger().text(1UZ).empty());
-				CHECK(pgrid->context().logger().text(2UZ).empty());
+				CHECK(pgrid->context().logger().text(0U).empty());
+				CHECK(pgrid->context().logger().text(1U).empty());
+				CHECK(pgrid->context().logger().text(2U).empty());
 				CHECK(
-					pgrid->context().logger().text(3UZ) ==
+					pgrid->context().logger().text(3U) ==
 					// Note: the "i.e. (0, 0, 0)" is due to modulo arithmetic
 					"AssertionError: get:  assert_pos_idx_bounds(4) i.e. (0, 0, 0) is greater than "
 					"extent 4\n");
@@ -1422,18 +1514,21 @@ SCENARIO("Applying filter to ConvGrid")
 		CAPTURE(image.geterror(false));
 		REQUIRE(!image.has_error());
 		image.read();
-		auto image_grid_spec = image.spec();
-		image_grid_spec.width += 2;
-		image_grid_spec.height += 2;
-		image_grid_spec.format = OIIO::TypeDescFromC<felt2::Scalar>::value();
 
 		// False positive:
 		// NOLINTNEXTLINE(misc-const-correctness)
 		convfelt::InputGrid image_grid{
 			convfelt::make_host_context(),
-			{image.spec().height + 2, image.spec().width + 2, image_grid_spec.nchannels},
+			convfelt::InputGrid::PowTwoDu::from_minimum_size(
+				{image.spec().height + 2, image.spec().width + 2, image.spec().nchannels}),
 			{0, 0, 0},
 			0};
+
+		auto image_grid_spec = image.spec();
+		image_grid_spec.width = image_grid.size().as_pos()(1);
+		image_grid_spec.height = image_grid.size().as_pos()(0);
+		image_grid_spec.nchannels = image_grid.size().as_pos()(2);
+		image_grid_spec.format = OIIO::TypeDescFromC<felt2::Scalar>::value();
 
 		// NOLINTNEXTLINE(misc-const-correctness)
 		OIIO::ImageBuf image_grid_buf{image_grid_spec, image_grid.storage().data()};
@@ -1448,30 +1543,54 @@ SCENARIO("Applying filter to ConvGrid")
 				convfelt::ConvGridTD<felt2::Scalar, 3, convfelt::GridFlag::is_device_shared>;
 
 			FilterSizeHelper const filter_input_sizer{
-				felt2::Vec3i{4, 4, image_grid.size()(2)}, felt2::Vec3i{2, 2, 0}};
+				felt2::PowTwo3u::from_exponents({2, 2, image_grid.size().exps()(2)}),
+				felt2::Vec3i{2, 2, 0}};
 
+			// Compute required size of a grid that contains filter input pixels side-by-side, given
+			// a source image.
 			auto input_size = filter_input_sizer.input_size_from_source_size(image_grid.size());
 
-			auto filter_input_grid = felt2::device::make_unique_sycl<FilterGrid>(
-				dev,
-				ctx,
-				convfelt::make_device_context(dev, ctx),
-				input_size,
-				filter_input_sizer.filter_window());
+			// Create a context tieing together objects in this operation. In particular, useful
+			// for logging.
+			auto convctx = convfelt::make_device_context(dev, ctx);
 
+			static constexpr auto k_max_log_len = 1024U;
+			[[maybe_unused]] auto log_storage = felt2::components::device::Log::make_storage(
+				dev, ctx, image_grid.storage().size(), k_max_log_len);
+			convctx.logger().set_storage(log_storage);
+
+			// Grid of filter inputs expanded from source image, with child grids of input values
+			// for each filter side-by-side. Typically the input grid will be much larger than the
+			// source image grid, since many pixels are duplicated, depending on the stride of the
+			// filter as it moves across the source image.
+			auto filter_input_grid = felt2::device::make_unique_sycl<FilterGrid>(
+				dev, ctx, convctx, input_size, filter_input_sizer.filter_window());
+
+			// Loop each individual filter input child.
 			for (auto const & [filter_pos_idx, filter] :
 				 convfelt::iter::idx_and_val(filter_input_grid->children()))
 			{
-				felt2::Vec3i const input_pos_start =
-					filter_input_sizer.input_start_pos_from_filter_pos(
+				// Calculate position in original source image that corresponds to the local (0,0)
+				// point in the filter.
+				felt2::Vec3i const source_pos_start =
+					filter_input_sizer.source_start_pos_from_filter_pos(
 						filter_input_grid->children().index(filter_pos_idx));
 
+				// Loop each position within the filter.
 				for (felt2::PosIdx const local_pos_idx : convfelt::iter::pos_idx(filter))
 				{
-					felt2::Vec3i const input_pos =
-						input_pos_start + felt2::index(local_pos_idx, filter.size());
+					// Calculate the position in the original source image that the current filter
+					// pixel corresponds to.
+					felt2::Vec3i const source_pos =
+						source_pos_start + felt2::index(local_pos_idx, filter.size());
 
-					filter.set(local_pos_idx, image_grid.get(input_pos));
+					// source_pos may be out of bounds wrt image_grid because the filter_input_grid
+					// can have additional padding due to pow2 sizing.
+					if (!image_grid.inside(source_pos))
+						continue;
+
+					// Set the filter input value from the corresponding value in the source image.
+					filter.set(local_pos_idx, image_grid.get(source_pos));
 				}
 			}
 
@@ -1479,12 +1598,7 @@ SCENARIO("Applying filter to ConvGrid")
 			{
 				auto image_grid_device = felt2::device::make_unique_sycl<
 					convfelt::ByValue<felt2::Scalar, 3, convfelt::GridFlag::is_device_shared>>(
-					dev,
-					ctx,
-					convfelt::make_device_context(dev, ctx),
-					image_grid.size(),
-					image_grid.offset(),
-					0.0F);
+					dev, ctx, convctx, image_grid.size(), image_grid.offset(), 0.0F);
 
 				image_grid_device->storage().assign(
 					image_grid.storage().begin(), image_grid.storage().end());
@@ -1492,17 +1606,12 @@ SCENARIO("Applying filter to ConvGrid")
 				auto filter_input_grid_device = felt2::device::make_unique_sycl<FilterGrid>(
 					dev,
 					ctx,
-					convfelt::make_device_context(dev, ctx),
+					convctx,
 					input_size,
+
 					filter_input_sizer.filter_window());
 				sycl::range<1> const work_items{image_grid_device->storage().size()};
 				sycl::queue queue{ctx, dev, &async_handler};  // NOLINT(misc-const-correctness)
-
-				[[maybe_unused]] auto log_storage =
-					felt2::components::device::Log::make_storage(
-						queue.get_device(), queue.get_context(), work_items.get(0), 1024UL);
-				image_grid_device->context().logger().set_storage(log_storage);
-				filter_input_grid_device->context().logger().set_storage(log_storage);
 
 				queue.submit(
 					[&](sycl::handler & cgh_)
@@ -1514,20 +1623,33 @@ SCENARIO("Applying filter to ConvGrid")
 							 filter_input_grid_device =
 								 filter_input_grid_device.get()](sycl::item<1> item_)
 							{
+								// Thread id == idx of source image pixel channel.
 								std::size_t const tid = item_.get_linear_id();
+
+								// Configure logging.
 								image_grid_device->context().logger().set_stream(&tid);
 								filter_input_grid_device->context().logger().set_stream(&tid);
+
+								// Grid of sub-grids, one sub-grid per filter, each containing the
+								// input pixel values for that filter.
 								auto & filter_inputs = filter_input_grid_device->children();
 
-								felt2::PosIdx const input_pos_idx = item_.get_linear_id();
+								// Index of pixel channel in source image.
+								felt2::PosIdx const source_pos_idx = tid;
+								// Position of pixel channel in source image.
 								felt2::Vec3i const source_pos =
-									image_grid_device->index(input_pos_idx);
+									image_grid_device->index(source_pos_idx);
 
+								// Value of channel for selected pixel channel in source image.
 								felt2::Scalar const source_value =
-									image_grid_device->get(input_pos_idx);
+									image_grid_device->get(source_pos_idx);
 
+								// Find all filters that use the current source pixel channel as an
+								// input, and compute the position in the filter that the source
+								// pixel channel corresponds to, then call a callback for each
+								// matched filter input.
 								filter_input_sizer.input_pos_from_source_pos(
-									image_grid_device->size(),
+									image_grid_device->size().as_pos(),
 									source_pos,
 									[&](felt2::Vec3i const & filter_pos_,
 										felt2::Vec3i const & global_pos_) {
@@ -1565,22 +1687,38 @@ SCENARIO("Applying filter to ConvGrid")
 						CHECK(expected_child.size() == actual_child.size());
 						CHECK(expected_child.offset() == actual_child.offset());
 						CHECK(expected_child.storage().size() == actual_child.storage().size());
-
-						CHECK(std::ranges::equal(expected_child.storage(), actual_child.storage()));
+						bool const expected_equals_actual_storage =
+							std::ranges::equal(expected_child.storage(), actual_child.storage());
+						CHECK(expected_equals_actual_storage);
+						if (!expected_equals_actual_storage)
+						{
+							for (auto const idx :
+								 std::views::iota(0U, expected_child.storage().size()))
+							{
+								auto const pos = expected_child.index(idx);
+								auto const expected_val = expected_child.get(idx);
+								auto const actual_val = actual_child.get(idx);
+								CAPTURE(pos, expected_val, actual_val);
+								CHECK(actual_val == expected_val);
+							}
+						}
 					}
 				}
 			}
 
 			AND_GIVEN("an output image and weight matrix")
 			{
-				FilterSizeHelper const filter_output_sizer{felt2::Vec3i{2, 2, 4}};
+				FilterSizeHelper const filter_output_sizer{
+					felt2::PowTwo3u::from_exponents({1, 1, 2})};
 
 				auto filter_output_grid = felt2::device::make_unique_sycl<FilterGrid>(
 					dev,
 					ctx,
-					convfelt::make_device_context(dev, ctx),
+					convctx,
+
 					filter_output_sizer.output_size_from_num_filter_regions(
-						filter_input_grid->children().size()),
+						filter_input_grid->children().size().as_pos()),
+
 					filter_output_sizer.filter_window());
 
 				REQUIRE(
@@ -1602,7 +1740,7 @@ SCENARIO("Applying filter to ConvGrid")
 					for (auto const & filter_pos_idx :
 						 convfelt::iter::pos_idx(filter_output_grid->children()))
 					{
-						const felt2::Vec3i filter_pos =
+						felt2::Vec3i const filter_pos =
 							filter_input_grid->children().index(filter_pos_idx);
 						CAPTURE(filter_pos);
 
@@ -1628,27 +1766,17 @@ SCENARIO("Applying filter to ConvGrid")
 
 					sycl::nd_range<1> const work_range{
 						filter_output_grid->storage().size(),
-						static_cast<size_t>(filter_output_grid->child_size().prod())};
-
-					static constexpr auto k_max_log_len = 1024UZ;
-
-					auto log_storage = felt2::components::device::Log::make_storage(
-						queue.get_device(),
-						queue.get_context(),
-						work_range.get_local().get(0),
-						k_max_log_len);
-					filter_input_grid->context().logger().set_storage(log_storage);
-					filter_output_grid->context().logger().set_storage(log_storage);
+						filter_output_grid->child_size().as_size().prod()};
 
 					queue.submit(
 						[&](sycl::handler & cgh_)
 						{
 							assert(
 								usm_weights.matrix().rows() ==
-								filter_output_grid->child_size().prod());
+								filter_output_grid->child_size().as_pos().prod());
 							assert(
 								usm_weights.matrix().cols() ==
-								filter_input_grid->child_size().prod());
+								filter_input_grid->child_size().as_pos().prod());
 
 							sycl::accessor<
 								felt2::Scalar,
@@ -1737,19 +1865,20 @@ SCENARIO("Applying filter to ConvGrid")
 				{
 					sycl::queue queue{ctx, dev, &async_handler};  // NOLINT(misc-const-correctness)
 
-					auto filter_input_template = felt2::device::make_unique_sycl<
-						convfelt::TemplateParentGridTD<felt2::Scalar, 3, 1U>>(
-						queue.get_device(),
-						queue.get_context(),
-						convfelt::make_device_context(queue),
-						input_size,
-						filter_input_sizer.filter_window());
+					using TemplateParentGrid = convfelt::TemplateParentGridTD<felt2::Scalar, 3, 1U>;
+					auto filter_input_template =
+						felt2::device::make_unique_sycl<TemplateParentGrid>(
+							queue.get_device(),
+							queue.get_context(),
+							convctx,
+							input_size,
+							filter_input_sizer.filter_window());
 
 					auto image_grid_device = felt2::device::make_unique_sycl<
 						convfelt::ByValue<felt2::Scalar, 3, convfelt::GridFlag::is_device_shared>>(
 						queue.get_device(),
 						queue.get_context(),
-						convfelt::make_device_context(queue),
+						convctx,
 						image_grid.size(),
 						image_grid.offset(),
 						0.0F);
@@ -1758,17 +1887,14 @@ SCENARIO("Applying filter to ConvGrid")
 						image_grid.storage().begin(), image_grid.storage().end());
 
 					auto const filters_per_image =
-						static_cast<std::size_t>(filter_output_grid->children().size().prod());
-					auto const elems_per_filter =
-						static_cast<std::size_t>(filter_output_grid->child_size().prod());
+						filter_output_grid->children().size().as_size().prod();
+					auto const elems_per_filter = filter_output_grid->child_size().as_size().prod();
 
 					std::size_t const ideal_elems_per_work_group =
 						dev.get_info<sycl::info::device::sub_group_sizes>()[0];
 					std::size_t const elems_per_image = elems_per_filter * filters_per_image;
 
-					CHECK(
-						elems_per_image ==
-						static_cast<std::size_t>(filter_output_grid->size().prod()));
+					CHECK(elems_per_image == filter_output_grid->size().as_size().prod());
 					CHECK(elems_per_image == filter_output_grid->storage().size());
 
 					constexpr auto k_scalar = [](auto val_)
@@ -1804,10 +1930,14 @@ SCENARIO("Applying filter to ConvGrid")
 						dev.get_info<sycl::info::device::sub_group_sizes>()[0] <= work_group_size);
 
 					// Check invariants
-					CHECK(usm_weights.matrix().rows() == filter_output_grid->child_size().prod());
+					CHECK(
+						usm_weights.matrix().rows() ==
+						filter_output_grid->child_size().as_pos().prod());
 					CHECK(
 						usm_weights.matrix().rows() <= static_cast<Eigen::Index>(work_group_size));
-					CHECK(usm_weights.matrix().cols() == filter_input_grid->child_size().prod());
+					CHECK(
+						usm_weights.matrix().cols() ==
+						filter_input_grid->child_size().as_pos().prod());
 					CHECK(usm_weights.matrix().cols() == filter_input_sizer.num_filter_elems());
 					// TODO(DF): Technically this check could fail and we still have a valid
 					//  situation, just complicated slightly by data boundary condition... or could
@@ -1817,18 +1947,6 @@ SCENARIO("Applying filter to ConvGrid")
 
 					sycl::nd_range<1> const work_range{
 						num_work_groups * work_group_size, work_group_size};
-
-					[[maybe_unused]] auto log_storage =
-						felt2::components::device::Log::make_storage(
-							queue.get_device(),
-							queue.get_context(),
-							work_range.get_local().get(0),
-							1024);
-
-					filter_input_template->context().logger().set_storage(log_storage);
-					filter_input_grid->context().logger().set_storage(log_storage);
-					filter_output_grid->context().logger().set_storage(log_storage);
-					image_grid_device->context().logger().set_storage(log_storage);
 
 					queue.submit(
 						[&](sycl::handler & cgh_)
@@ -1849,104 +1967,192 @@ SCENARIO("Applying filter to ConvGrid")
 								 input_child_data,
 								 filter_input_sizer,
 								 input_size = filter_input_sizer.input_size_from_source_size(
-									 image_grid.size())](sycl::nd_item<1> item_)
+									 image_grid.size()),
+								 logger = convctx.m_logger_impl](sycl::nd_item<1> item_)
 								{
+									// Get current group of filters.
 									std::size_t const group_id = item_.get_group_linear_id();
+									// Get current filter pixel channel index.
 									std::size_t const local_id = item_.get_local_linear_id();
 
-									felt2::PosIdx const elems_per_work_group =
+									// Configure logging.
+									std::size_t const global_id = item_.get_global_id();
+									logger.set_stream(&global_id);
+
+									// Number of pixel channels processed by each work group.
+									felt2::PosIdx const threads_per_work_group =
 										item_.get_local_range(0);
-									felt2::PosIdx const elems_per_filter =
-										elems_per_work_group / filters_per_work_group;
 
-									felt2::PosIdx const filter_idx_offset_for_item =
-										local_id / elems_per_filter;
-									felt2::PosIdx const filter_idx_for_item =
+									// Number of pixel channels per filter.
+									felt2::PosIdx const threads_per_filter =
+										threads_per_work_group / filters_per_work_group;
+
+									// Index of this filter within the current group of filters.
+									felt2::PosIdx const filter_idx_offset_for_thread =
+										local_id / threads_per_filter;
+
+									// Index of this filter globally.
+									felt2::PosIdx const filter_idx_for_thread =
 										group_id * filters_per_work_group +
-										filter_idx_offset_for_item;
-									felt2::PosIdx const elem_idx_for_item =
-										local_id - filter_idx_offset_for_item * elems_per_filter;
+										filter_idx_offset_for_thread;
 
-									auto const num_cols =
+									auto const filter_input_size =
 										static_cast<felt2::PosIdx>(weights.cols());
 
-									// Deliberately copy into private memory.
-									auto input_child =
-										filter_input_template->children().get(filter_idx_for_item);
+									// Deliberately copy into private memory the "template" child
+									// filter grid for the current filter.
+									auto input_child = filter_input_template->children().get(
+										filter_idx_for_thread);
+
 									// TODO(DF): For large filters (e.g. fully connected layers)
 									//  should fall back to global memory?  Or refactor kernel
 									//  somehow?  For fully connected layer, input_child is the same
-									//  image_grid, so no need to sample into local memory. So
+									//  as image_grid, so no need to sample into local memory. So
 									//  perhaps safe to assume either that fully connected case or
 									//  small-enough filters for local memory?
-									input_child.storage() = std::span(
-										&input_child_data[filter_idx_offset_for_item][0], num_cols);
 
+									// Configure newly created child to point into memory region
+									// shared by this group, offset by the index of the current
+									// filter, with a size large enough for the filter's input
+									// pixels.
+									input_child.storage() = std::span(
+										&input_child_data[filter_idx_offset_for_thread][0],
+										filter_input_size);
+
+									// Obtain a reference to the region (i.e. child grid) of the
+									// output image where the filter results should be written.
 									auto & output_child =
-										filter_output_grid->children().get(filter_idx_for_item);
+										filter_output_grid->children().get(filter_idx_for_thread);
 
 									// Assert invariants.
-									if (num_cols != input_child.storage().size())
+									if (filter_input_size != input_child.storage().size())
 									{
-										filter_input_template->context().logger().log(
-											local_id,
+										(void)logger.log(
 											"num_cols != input_child.storage().size() i.e. ",
-											num_cols,
+											filter_input_size,
 											" != ",
 											input_child.storage().size(),
 											"\n");
 										return;
 									}
 									if (static_cast<felt2::PosIdx>(weights.rows()) >
-										elems_per_filter)
+										threads_per_filter)
 									{
-										filter_output_grid->context().logger().log(
-											local_id,
+										(void)logger.log(
 											"weights.rows()	> elems_per_filter i.e. ",
 											weights.rows(),
 											" > ",
-											elems_per_filter,
+											threads_per_filter,
 											"\n");
 										return;
 									}
 
-									// Seriously?
+									// Initial index of pixel channel for this thread, within this
+									// filter.
+									felt2::PosIdx const filter_input_elem_idx_for_thread =
+										local_id -
+										filter_idx_offset_for_thread * threads_per_filter;
+
+									// Copy from source image into group-local filter input buffer.
+									// Using SIMD, each thread loops over the pixels in the filter
+									// input buffer, jumping over those that are handled by sibling
+									// threads, and populates the corresponding element in the
+									// filter input buffer from the source image.
+									// Seriously clang-tidy!?:
 									// NOLINTNEXTLINE(misc-const-correctness)
-									for (felt2::PosIdx simd_col = 0; simd_col < num_cols;
-										 simd_col += elems_per_filter)
+									for (felt2::PosIdx simd_col = 0; simd_col < filter_input_size;
+										 simd_col += threads_per_filter)
 									{
-										felt2::PosIdx const col = simd_col + elem_idx_for_item;
-										if (col >= num_cols)
+										// Filter input pixel channel index (or column of input
+										// region row).
+										felt2::PosIdx const col =
+											simd_col + filter_input_elem_idx_for_thread;
+										if (col >= filter_input_size)
 											break;
 
+										// Filter input pixel channel position.
 										felt2::Vec3i const pos_in_input_grid =
 											input_child.index(col);
+
+										// Source image pixel channel position.
 										felt2::Vec3i const pos_in_source_grid =
 											filter_input_sizer.source_pos_from_input_pos(
 												pos_in_input_grid);
-										input_child.set(col, image_grid->get(pos_in_source_grid));
+
+										// Position in source grid may be out of bounds, since
+										// input_child uses pow2 sizing.
+										if (image_grid->inside(pos_in_source_grid))
+										{
+											// Update filter input buffer with value from source
+											// image.
+											input_child.set(
+												col, image_grid->get(pos_in_source_grid));
+										}
+										else
+										{
+											// Out of domain of the source image, set to zero.
+											input_child.set(
+												col, static_cast<decltype(input_child)::Leaf>(0));
+										}
 									}
 
-									if (elem_idx_for_item > output_child.storage().size())
+									// Thread's filter input pixel channel index doubles as the
+									// thread's output image pixel channel index. Short-circuit if
+									// this is out of bounds of the output image region (child grid)
+									// size.
+									if (filter_input_elem_idx_for_thread >
+										output_child.storage().size())
 										return;
 
+									// Ensure the filter input buffer has also been filled by
+									// sibling threads.
 									item_.barrier(sycl::access::fence_space::local_space);
 
+									// Index within region (child grid) of output image to update
+									// with results of applying filter to source image.
 									auto const row_idx =
-										static_cast<Eigen::Index>(elem_idx_for_item);
+										static_cast<Eigen::Index>(filter_input_elem_idx_for_thread);
 
+									// Apply filter to region of source image. Each thread handles
+									// one pixel channel of the output image. That is, one
+									// row-column multiplation of the overall matrix operation of
+									// filter weights applied to image region, to give a single
+									// pixel channel output. The region of the source image that the
+									// matrix row is applied to is the filter input buffer, fetched
+									// into group shared memory, above.
 									output_child.matrix()(row_idx) =
 										weights.row(row_idx).dot(input_child.matrix());
 								});
 						});
-					queue.wait_and_throw();
+
+					auto const print_logs = [&]
+					{
+						if (!convctx.logger().has_logs())
+							return;
+						for (auto const stream_id :
+							 std::views::iota(0U, convctx.logger().num_streams()))
+						{
+							auto const txt = convctx.logger().text(stream_id);
+							if (!txt.empty())
+								fmt::print("{}: {}", stream_id, txt);
+						}
+					};
+
+					try
+					{
+						queue.wait_and_throw();
+					}
+					catch (std::exception const & exc)
+					{
+						fmt::print("ASYNC EXCEPTION(S): {}", exc.what());
+						print_logs();
+						FAIL("SYCL async exception");
+					}
 
 					THEN("values are as expected")
 					{
-						CHECK(!filter_input_grid->context().logger().has_logs());
-						CHECK(!filter_output_grid->context().logger().has_logs());
-						CHECK(!image_grid_device->context().logger().has_logs());
-						CHECK(!filter_input_template->context().logger().has_logs());
+						print_logs();
+						CHECK(!convctx.logger().has_logs());
 						assert_expected_values();
 					}
 				}  // WHEN("filter is applied in kernel that computes filter input on the fly")
@@ -1989,7 +2195,8 @@ SCENARIO("Applying filter to ConvGrid")
 
 			AND_GIVEN("an output vector and weight matrix")
 			{
-				FilterSizeHelper const filter_output_sizer{felt2::Vec3i(1, 1, 5)};
+				FilterSizeHelper const filter_output_sizer{
+					felt2::PowTwo3u::from_exponents({0, 0, 3})};
 
 				auto filter_output_grid = felt2::device::make_unique_sycl<FilterGrid>(
 					dev,
@@ -1998,10 +2205,13 @@ SCENARIO("Applying filter to ConvGrid")
 					filter_output_sizer.output_size_from_num_filter_regions(felt2::Vec3i::Ones()),
 					filter_output_sizer.filter_window());
 
-				REQUIRE(filter_output_grid->children().size() == felt2::Vec3i(1, 1, 1));
+				REQUIRE(filter_output_grid->children().size().as_pos() == felt2::Vec3i(1, 1, 1));
 
 				convfelt::USMMatrix const usm_weights{
-					filter_output_sizer.num_filter_elems(), image_grid.size().prod(), dev, ctx};
+					filter_output_sizer.num_filter_elems(),
+					image_grid.size().as_pos().prod(),
+					dev,
+					ctx};
 
 				usm_weights.matrix().setRandom();
 
@@ -2010,7 +2220,7 @@ SCENARIO("Applying filter to ConvGrid")
 					for (auto const & filter_pos_idx :
 						 convfelt::iter::pos_idx(filter_output_grid->children()))
 					{
-						const felt2::Vec3i filter_pos =
+						felt2::Vec3i const filter_pos =
 							filter_input_grid->children().index(filter_pos_idx);
 						CAPTURE(filter_pos);
 

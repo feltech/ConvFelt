@@ -7,10 +7,8 @@ namespace felt2
 /**
  * Get index in data array of position vector.
  *
- * The grid is packed in a 1D array, so this method is required to
- * get the index in that array of the D-dimensional position.
- *
- * @snippet test_Grid.cpp Position index
+ * The grid is packed in a 1D array, so this method is required to get the index in that array of
+ * the D-dimensional position.
  *
  * @param pos_ position in grid.
  * @param size_ size of grid.
@@ -36,11 +34,44 @@ PosIdx index(VecDi<D> const & pos_, VecDi<D> const & size_, VecDi<D> const & off
 }
 
 /**
+ * Get index in data array of position vector.
+ *
+ * This overload makes use of the properties of size that guaranteed to be a power-of-two. I.e.
+ * uses bit shifting operations.
+ *
+ * The grid is packed in a 1D array, so this method is required to get the index in that array of
+ * the D-dimensional position.
+ *
+ * @param pos_ position in grid.
+ * @param size_ size of grid.
+ * @param offset_ spatial offset of grid.
+ * @return index in data array of pos in grid of given size and offset.
+ */
+template <Dim D>
+PosIdx index(VecDi<D> const & pos_, PowTwoDu<D> const & size_, VecDi<D> const & offset_)
+{
+	using AxisCoord = typename VecDi<D>::Scalar;
+
+	AxisCoord pos_idx = 0;
+
+	auto const & exps = size_.exps();
+
+	for (Dim i = 0; i < D; ++i)
+	{
+		AxisCoord idx_i = (pos_(i) - offset_(i));
+
+		for (Dim j = i + 1; j < D; ++j) idx_i <<= exps(j);
+
+		pos_idx += idx_i;
+	}
+	return static_cast<PosIdx>(pos_idx);
+}
+
+/**
  * Get position of index.
  *
- * Given an index and the dimensions and offset of a grid, calculate
- * the position vector that the index pertains to in a representative
- * 1D array.
+ * Given an index and the size and offset of a grid, calculate the position vector that the index
+ * pertains to in a representative 1D array.
  *
  * @param idx_ index to query.
  * @param size_ size of grid.
@@ -75,12 +106,27 @@ VecDi<D> index(PosIdx idx_, VecDi<D> const & size_, VecDi<D> const & offset_ = V
 	return pos;
 }
 
+
+/**
+ * Get position of index.
+ *
+ * Given an index and the size and offset of a grid, calculate the position vector that the index
+ * pertains to in a representative 1D array.
+ *
+ * This overload makes use of the properties of size that guaranteed to be a power-of-two. I.e.
+ * uses bit shifting operations.
+ *
+ * @param idx_ index to query.
+ * @param size_ size of grid.
+ * @param offset_ spatial offset of grid.
+ * @return position that the given index would represent in a grid of given size and offset.
+ */
 template <Dim D>
 VecDi<D> index(PosIdx idx_, PowTwoDu<D> const & size_, VecDi<D> const & offset_ = VecDi<D>::Zero())
 {
 	VecDi<D> pos;
-	auto const& mask = size_.mask();
-	auto const& exps = size_.exps();
+	auto const & mask = size_.mask();
+	auto const & exps = size_.exps();
 
 	// Note: since `Dim` is unsigned, we cannot allow `axis` to decrement below zero.
 	for (Dim axis = D - 1; axis != 0; --axis)
@@ -96,7 +142,8 @@ VecDi<D> index(PosIdx idx_, PowTwoDu<D> const & size_, VecDi<D> const & offset_ 
 /**
  * Test if a position is inside given bounds.
  *
- * @tparam Pos the type of position vector (i.e. float vs. int).
+ * @tparam TPos the type of position vector.
+ * @tparam TBounds the type of boundary (min/max) vectors.
  * @param pos_ position in grid to query.
  * @param pos_min_ minimum allowed position.
  * @param pos_max_ one more than the maximum allowed position.

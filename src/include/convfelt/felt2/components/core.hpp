@@ -167,10 +167,11 @@ concept IsContext = requires(T obj_)
 template <class T>
 concept HasSize = requires(T obj_)
 {
+	typename T::PowTwoDu;
 	typename T::VecDi;
 	{
 		obj_.size()
-	} -> std::convertible_to<typename T::VecDi>;
+	} -> std::convertible_to<typename T::PowTwoDu>;
 	{
 		obj_.offset()
 	} -> std::convertible_to<typename T::VecDi>;
@@ -194,7 +195,7 @@ template <class T>
 concept HasResize = requires(T obj_)
 {
 	typename T::VecDi;
-	{obj_.resize(std::declval<typename T::VecDi>(), std::declval<typename T::VecDi>())};
+	{obj_.resize(std::declval<typename T::PowTwoDu>(), std::declval<typename T::VecDi>())};
 };
 
 template <class T, Dim D>
@@ -277,15 +278,16 @@ struct Size
 	static constexpr Dim k_dims = Traits::k_dims;
 	/// D-dimensional signed integer vector.
 	using VecDi = VecDi<k_dims>;
+	using PowTwoDu = PowTwoDu<k_dims>;
 
 	/// The dimensions (size) of the grid.
-	VecDi m_size;
+	PowTwoDu m_size;
 	/// The translational offset of the grid's zero coordinate.
 	VecDi m_offset;
 	/// Cache for use in `inside`.
-	VecDi m_offset_plus_size{m_offset + m_size};
+	VecDi m_offset_plus_size = m_offset + m_size.as_pos();
 
-	[[nodiscard]] VecDi const & size() const noexcept
+	[[nodiscard]] PowTwoDu const & size() const noexcept
 	{
 		return m_size;
 	}
@@ -335,11 +337,11 @@ struct Size
 		return felt2::inside(pos_, m_offset, m_offset_plus_size);
 	}
 
-	void resize(VecDi const & size_, VecDi const & offset_) noexcept
+	void resize(PowTwoDu const & size_, VecDi const & offset_) noexcept
 	{
 		m_size = size_;
 		m_offset = offset_;
-		m_offset_plus_size = m_offset + size_;
+		m_offset_plus_size = m_offset + size_.as_pos();
 	}
 };
 
@@ -368,7 +370,7 @@ struct AssertBounds
 		if (!m_size_impl.get().inside(pos_))
 		{
 			typename Size::VecDi const k_max_extent =
-				m_size_impl.get().offset() + m_size_impl.get().size();
+				m_size_impl.get().offset() + m_size_impl.get().size().as_pos();
 			m_context_impl.get().logger().log(
 				"AssertionError: ",
 				title_,
@@ -464,7 +466,7 @@ struct Activate
 		// Note: resize() on libstdc++ 11 invokes operator=(), i.e. Copy/MoveAssignable, when we
 		// only want to enforce Copy/MoveInsertable, i.e. copy/move constructor. So here we
 		// essentially reimplement resize() (with the added precondition that data is empty).
-		auto const new_size = static_cast<PosIdx>(m_size_impl.get().size().prod());
+		auto const new_size = m_size_impl.get().size().as_size().prod();
 		m_storage_impl.get().storage().reserve(new_size);
 		for (PosIdx idx = 0; idx < new_size; ++idx)
 			m_storage_impl.get().storage().push_back(m_background);
@@ -695,35 +697,25 @@ struct ChildrenSize
 {
 	static constexpr PosIdx k_dims = Traits::k_dims;
 	using VecDi = felt2::VecDi<k_dims>;
+	using PowTwoDu = felt2::PowTwoDu<k_dims>;
 
 	std::reference_wrapper<Size const> m_size_impl;
 	/// Size of a child sub-grid.
-	VecDi m_child_size;
-	VecDi m_child_offset{(m_size_impl.get().offset().array() / m_child_size.array()).matrix()};
-	VecDi m_children_size{
-		[&]() constexpr noexcept
-		{
-			VecDi children_size =
-				(m_size_impl.get().size().array() / m_child_size.array()).matrix();
-			using Idx = typename VecDi::Index;
-
-			// Ensure total size is covered with partitions in the case that total size doesn't
-			// divide exactly.
-			for (Idx dim = 0; dim < static_cast<Idx>(k_dims); ++dim)
-				if (children_size(dim) * m_child_size(dim) != m_size_impl.get().size()(dim))
-					children_size(dim) += 1;
-
-			return children_size;
-		}()};
-	PosIdx m_num_children{static_cast<PosIdx>(m_children_size.prod())};
-	PosIdx m_num_elems_per_child{static_cast<PosIdx>(m_child_size.prod())};
+	PowTwoDu m_child_size;
+	VecDi m_child_offset{
+		(m_size_impl.get().offset().array() / m_child_size.as_pos().array()).matrix()};
+	// Divide total size by child size. Division is equivalent to subtraction of exponents.
+	PowTwoDu m_children_size =
+		PowTwoDu::from_exponents(m_size_impl.get().size().exps() - m_child_size.exps());
+	PosIdx m_num_children{m_children_size.as_size().prod()};
+	PosIdx m_num_elems_per_child{m_child_size.as_size().prod()};
 
 	/**
 	 * Get size of child sub-grids.
 	 *
 	 * @return size of child sub-grid.
 	 */
-	[[nodiscard]] constexpr VecDi const & child_size() const noexcept
+	[[nodiscard]] constexpr PowTwoDu const & child_size() const noexcept
 	{
 		return m_child_size;
 	}
@@ -733,7 +725,7 @@ struct ChildrenSize
 		return m_child_offset;
 	}
 
-	[[nodiscard]] constexpr VecDi const & children_size() const noexcept
+	[[nodiscard]] constexpr PowTwoDu const & children_size() const noexcept
 	{
 		return m_children_size;
 	}
@@ -797,23 +789,25 @@ struct ChildrenSize
 			auto const pos_child_in_parent = pos_child_in_parent_with_offset - children.offset();
 			// Scaled position of child == position in world space, without offset.
 			auto const pos_child_in_world_without_parent_offset =
-				(pos_child_in_parent.array() * m_child_size.array()).matrix();
+				(pos_child_in_parent.array() * m_child_size.as_pos().array()).matrix();
 			// Position of child in world space, including offset.
 			auto const pos_child_in_world =
 				pos_child_in_world_without_parent_offset + m_size_impl.get().offset();
 
 			// Calculate overflow at edge of grid.
 			auto const pos_lower =
-				(pos_child_in_parent_with_offset.array() * m_child_size.array()).matrix();
-			auto const pos_upper = (pos_lower.array() + m_child_size.array()).matrix();
-			auto const signed_overflow = pos_upper - m_size_impl.get().size();
+				(pos_child_in_parent_with_offset.array() * m_child_size.as_pos().array()).matrix();
+			auto const pos_upper = (pos_lower.array() + m_child_size.as_pos().array()).matrix();
+			auto const signed_overflow = pos_upper - m_size_impl.get().size().as_pos();
 			auto const overflow = signed_overflow.cwiseMax(0);
 
 			auto & child = children.get(pos_child_idx);
 
-			child.resize(m_child_size - overflow, pos_child_in_world);
+			child.resize(
+				Children::PowTwoDu::from_minimum_size(m_child_size.as_pos() - overflow),
+				pos_child_in_world);
 
-			auto const num_used_child_idxs = static_cast<felt2::PosIdx>(child.size().prod());
+			auto const num_used_child_idxs = child.size().as_size().prod();
 			child.storage() =
 				parent_data.subspan(pos_child_idx * m_num_elems_per_child, num_used_child_idxs);
 		}
@@ -837,21 +831,22 @@ struct ChildrenSize
 			auto const pos_child_in_parent = pos_child_in_parent_with_offset - children.offset();
 			// Scaled position of child == position in world space, without offset.
 			auto const pos_child_in_world_without_parent_offset =
-				(pos_child_in_parent.array() * m_child_size.array()).matrix();
+				(pos_child_in_parent.array() * m_child_size.as_pos().array()).matrix();
 			// Position of child in world space, including offset.
 			auto const pos_child_in_world =
 				pos_child_in_world_without_parent_offset + m_size_impl.get().offset();
 
 			// Calculate overflow at edge of grid.
 			auto const pos_lower =
-				(pos_child_in_parent_with_offset.array() * m_child_size.array()).matrix();
-			auto const pos_upper = (pos_lower.array() + m_child_size.array()).matrix();
-			auto const signed_overflow = pos_upper - m_size_impl.get().size();
+				(pos_child_in_parent_with_offset.array() * m_child_size.as_pos().array()).matrix();
+			auto const pos_upper = (pos_lower.array() + m_child_size.as_pos().array()).matrix();
+			auto const signed_overflow = pos_upper - m_size_impl.get().size().as_pos();
 			auto const overflow = signed_overflow.cwiseMax(0);
 
 			auto & child = children.get(pos_child_idx);
 
-			child.resize(m_child_size - overflow, pos_child_in_world);
+			child.resize(
+				PowTwoDu::from_minimum_size(m_child_size.as_pos() - overflow), pos_child_in_world);
 		}
 
 		return children;
