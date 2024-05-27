@@ -4,6 +4,7 @@ add_library(
 	convfelt
 	src/InputImageGrid.cpp
 	src/network/Network.cpp
+	include/convfelt/FilterSizeHelper.hpp
 )
 
 target_compile_features(

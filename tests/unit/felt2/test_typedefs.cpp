@@ -1,12 +1,14 @@
 // Copyright 2024 David Feltell
 // SPDX-License-Identifier: MIT
-#include <catch2/catch_all.hpp>
-#include <catch2/generators/catch_generators_all.hpp>
-
 #include <ranges>
+#include <tuple>
+
+#include <catch2/catch_test_macros.hpp>
+#include <catch2/generators/catch_generators.hpp>
+#include <catch2/generators/catch_generators_range.hpp>
 
 #include <convfelt/felt2/index.hpp>
-#include <range/v3/view/indices.hpp>
+#include <convfelt/felt2/typedefs.hpp>
 
 SCENARIO("Pow2 coord conversions")
 {

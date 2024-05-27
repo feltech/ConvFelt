@@ -1,0 +1,6 @@
+InheritParentConfig: true
+# Exclusions
+# - *-function-cognitive-complexity
+#     Test case functions can be long, e.g. Catch2 SCENARIOs.
+Checks: >
+  -*-function-cognitive-complexity

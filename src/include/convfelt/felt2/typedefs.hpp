@@ -30,6 +30,12 @@
 		obj
 #endif
 
+#ifdef __JETBRAINS_IDE__
+#define JB_HAS_SIDE_EFFECTS [[jetbrains::has_side_effects]]
+#else
+#define JB_HAS_SIDE_EFFECTS
+#endif
+
 namespace felt2
 {
 using Signed = int32_t;

@@ -5,6 +5,7 @@
 #include <algorithm>
 #include <cstddef>
 #include <memory>
+#include <ranges>
 #include <span>
 #include <string_view>
 #include <vector>
@@ -13,8 +14,9 @@
 #include <etl/string.h>
 #include <experimental/mdspan>
 #include <sycl/sycl.hpp>
-
-#include <range/v3/all.hpp>
+// TODO(DF): Using std::views gives `error: type constraint differs in template redeclaration` - try
+//  again with later version of libstdc++.
+#include <range/v3/view/zip.hpp>
 
 #include "./core.hpp"
 
@@ -23,6 +25,22 @@ namespace stdx = std::experimental;
 namespace etl::private_to_string
 {
 
+/**
+ * Transforms a vector into a string representation, with elements enclosed by parentheses and
+ * separated by commas.
+ *
+ * This is a hook for the ETL string library to provide string conversions for vectors.
+ *
+ * @tparam TIString Container type for the converted string output.
+ * @tparam T Element data type inside the input vector.
+ * @tparam D Dimension of the input vector.
+ * @param value_ Vector to stringifyt.
+ * @param str_ Container for the converted string output.
+ * @param format_ Format specifier in line with each element conversion in the object.
+ * @param append_ Defines whether the converted string should be appended to the existing content of
+ * str_. (Default: false)
+ * @return Reference to the input @p str_, containing the converted string.
+ */
 template <typename TIString, typename T, felt2::Dim D>
 TIString const & to_string(
 	felt2::VecDT<T, D> const & value_,
@@ -48,12 +66,21 @@ TIString const & to_string(
 
 namespace felt2::device
 {
-
+/**
+ * Dynamically allocates and constructs an object on a SYCL device, with the object being created
+ * using provided arguments.
+ *
+ * @tparam T Object being created.
+ * @param dev_ SYCL device for memory allocation.
+ * @param ctx_ SYCL context for memory allocation.
+ * @param args_ Arguments for object construction.
+ * @return A unique pointer to the created object.
+ * @throws std::runtime_error If sycl::malloc_shared fails to allocate memory.
+ */
 template <typename T>
-auto make_unique_sycl(
-	std::size_t count_, sycl::device const & dev_, sycl::context const & ctx_, auto &&... args_)
+auto make_unique_sycl(sycl::device const & dev_, sycl::context const & ctx_, auto &&... args_)
 {
-	auto * mem_region = sycl::malloc_shared<T>(count_, dev_, ctx_);
+	auto * mem_region = sycl::malloc_shared<T>(1, dev_, ctx_);
 	if (!mem_region)
 		throw std::runtime_error{"make_unique_sycl: sycl::malloc_shared failed"};
 	auto deleter = [ctx_](T * ptr_) { sycl::free(ptr_, ctx_); };
@@ -61,12 +88,6 @@ auto make_unique_sycl(
 
 	new (mem_region) T{std::forward<decltype(args_)>(args_)...};
 	return ptr;
-}
-
-template <typename T>
-auto make_unique_sycl(sycl::device const & dev_, sycl::context const & ctx_, auto &&... args_)
-{
-	return make_unique_sycl<T>(1, dev_, ctx_, std::forward<decltype(args_)>(args_)...);
 }
 
 template <typename T>
@@ -78,7 +99,6 @@ auto make_unique_sycl_array(
 	if (!mem_region)
 		throw std::runtime_error{"make_unique_sycl_array: sycl::malloc_shared failed"};
 	auto ptr =
-		// TODO(DF): Could perhaps use std::array for this instead:
 		// NOLINTNEXTLINE(*-avoid-c-arrays)
 		std::unique_ptr<T[], decltype(deleter)>{mem_region, std::move(deleter)};
 	return std::move(ptr);
@@ -133,11 +153,11 @@ struct USMRawArray
 {
 	using Leaf = typename Traits::Leaf;
 	using Array = std::span<Leaf>;
-	using UniquePtr = decltype(make_unique_sycl<Leaf>(
-		std::declval<std::size_t>(), std::declval<sycl::device>(), std::declval<sycl::context>()));
+	using UniquePtr = decltype(make_unique_sycl_array<Leaf>(
+		std::declval<sycl::device>(), std::declval<sycl::context>(), std::declval<std::size_t>()));
 
 	USMRawArray(std::size_t count_, sycl::device const & dev_, sycl::context const & ctx_)
-		: m_ptr{make_unique_sycl<Leaf>(count_, dev_, ctx_)}, m_data{m_ptr.get(), count_}
+		: m_ptr{make_unique_sycl_array<Leaf>(dev_, ctx_, count_)}, m_data{m_ptr.get(), count_}
 	{
 	}
 
@@ -214,6 +234,7 @@ struct Log
 	std::span<std::optional<etl::string_ext>> strs;
 	mutable sycl::private_ptr<std::size_t const> stream_id{nullptr};
 
+	JB_HAS_SIDE_EFFECTS
 	constexpr bool log(auto... args_) const noexcept
 	{
 		if (strs.empty())
@@ -276,20 +297,22 @@ struct Log
 			.buffer = decltype(Storage::buffer)(num_streams_ * max_msg_size_, '\0', {ctx_, dev_}),
 			.strs = decltype(Storage::strs)(num_streams_, {ctx_, dev_})};
 
-		namespace rv = ranges::views;
-
 		// TODO(DF): Gone a bit overboard, could be simpler, but provides a reference for ranges and
 		// mdspan.
 
-		auto char_span_by_stream = rv::indices(storage.strs.size()) |
-			rv::transform([chars_by_stream =
-							   stdx::mdspan{storage.buffer.data(), num_streams_, max_msg_size_}](
-							  std::size_t idx)
-						  { return stdx::submdspan(chars_by_stream, idx, stdx::full_extent); }) |
-			rv::transform([](auto && stream_mdspan)
-						  { return std::span(stream_mdspan.data_handle(), stream_mdspan.size()); });
+		auto char_span_by_stream =
+			std::views::iota(0U, storage.strs.size()) |
+			std::views::transform(
+				[chars_by_stream =
+					 stdx::mdspan{storage.buffer.data(), num_streams_, max_msg_size_}](
+					std::size_t idx)
+				{ return stdx::submdspan(chars_by_stream, idx, stdx::full_extent); }) |
+			std::views::transform(
+				[](auto && stream_mdspan)
+				{ return std::span(stream_mdspan.data_handle(), stream_mdspan.size()); });
 
-		for (auto && [stream_str, stream_chars] : rv::zip(storage.strs, char_span_by_stream))
+		for (auto && [stream_str, stream_chars] :
+			 ranges::views::zip(storage.strs, char_span_by_stream))
 			stream_str.emplace(stream_chars.data(), stream_chars.size());
 
 		return storage;
@@ -304,8 +327,7 @@ struct Aborter
 		// TODO(DF): Need a less vendor-specific solution. AdaptiveCpp generic JIT backend is
 		//  __SYCL_SINGLE_SOURCE__ yet provides (as below) vendor-soecific macros to target code to
 		//  host vs. device.
-		__hipsycl_if_target_device(asm("trap;");)
-		__hipsycl_if_target_host(std::abort();)
+		__hipsycl_if_target_device(asm("trap;");) __hipsycl_if_target_host(std::abort();)
 #endif
 	}
 };
